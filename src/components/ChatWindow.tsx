@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Phone, Video, MoreVertical, Paperclip, Smile, ArrowRight, X, Image as ImageIcon, FileText, Loader2 } from 'lucide-react';
+import { Send, Phone, Video, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { getSystemBotResponse } from '@/lib/gemini';
@@ -199,7 +199,7 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
       <div className="p-3 bg-card border-b flex items-center justify-between shadow-sm z-10">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="rounded-full md:hidden" onClick={onClose}>
-            <ArrowRight className="h-5 w-5" />
+            <ArrowLeft className="h-5 w-5" />
           </Button>
           <Avatar className="h-10 w-10 border-2 border-primary/10">
             <AvatarImage src={otherProfile?.photoURL} />

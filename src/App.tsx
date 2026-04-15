@@ -115,7 +115,7 @@ export default function App() {
   return (
     <div className="h-screen w-screen flex overflow-hidden bg-background" dir="rtl">
       {/* Sidebar */}
-      <div className="w-80 border-l flex flex-col bg-card shrink-0">
+      <div className={`w-full md:w-80 border-l flex flex-col bg-card shrink-0 ${activeChatId ? 'hidden md:flex' : 'flex'}`}>
         <ChatList 
           activeChatId={activeChatId} 
           onSelectChat={setActiveChatId} 
@@ -127,7 +127,7 @@ export default function App() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col relative">
+      <div className={`flex-1 flex flex-col relative ${!activeChatId ? 'hidden md:flex' : 'flex'}`}>
         {activeChatId ? (
           <ChatWindow chatId={activeChatId} currentUser={profile} onClose={() => setActiveChatId(null)} />
         ) : (

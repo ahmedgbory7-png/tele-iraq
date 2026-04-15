@@ -1,6 +1,6 @@
 {
   "name": "Remix: تليعراق",
-  "description": "تطبيق مراسلة عراقي متطور بواسطة أبو وطن",
+  "description": "تطبيق مراسلة عراقي متطور بتصميم متوافق مع الهواتف الذكية بواسطة أبو وطن",
   "requestFramePermissions": [
     "camera",
     "microphone"
