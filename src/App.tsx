@@ -93,9 +93,16 @@ export default function App() {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-background p-6 text-center">
         <AlertCircle className="h-16 w-16 text-destructive mb-4" />
-        <h1 className="text-2xl font-bold mb-2">مشكلة في الإعدادات</h1>
-        <p className="text-muted-foreground max-w-md">{configError}</p>
-        <p className="text-sm text-muted-foreground mt-4">تأكد من إضافة رابط التطبيق إلى Authorized Domains في Firebase Console.</p>
+        <h1 className="text-2xl font-bold mb-2">مشكلة في التشغيل</h1>
+        <p className="text-muted-foreground max-w-md mb-4">{configError}</p>
+        <div className="text-xs text-left bg-muted p-4 rounded-lg overflow-auto max-w-full font-mono">
+          <p>Project ID: {auth.app.options.projectId}</p>
+          <p>Auth Domain: {auth.app.options.authDomain}</p>
+          <p>Platform: {navigator.userAgent.includes('Android') ? 'Android' : 'Web/Other'}</p>
+          <p>URL: {window.location.href}</p>
+        </div>
+        <p className="text-sm text-muted-foreground mt-4">تأكد من إضافة <b>localhost</b> و <b>{window.location.hostname}</b> إلى Authorized Domains في Firebase Console.</p>
+        <Button onClick={() => window.location.reload()} className="mt-6">إعادة المحاولة</Button>
       </div>
     );
   }

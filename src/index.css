@@ -69,8 +69,6 @@
   background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
 }
 
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
 @custom-variant dark (&:is(.dark *));

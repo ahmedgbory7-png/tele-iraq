@@ -3,6 +3,18 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+let app;
+try {
+  app = initializeApp(firebaseConfig);
+} catch (error) {
+  console.error("Firebase initialization error:", error);
+  // Fallback to avoid crashing the whole module
+  app = initializeApp({
+    apiKey: "invalid",
+    authDomain: "invalid",
+    projectId: "invalid",
+    appId: "invalid"
+  });
+}
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
