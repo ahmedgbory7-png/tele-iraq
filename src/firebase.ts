@@ -8,7 +8,6 @@ try {
   app = initializeApp(firebaseConfig);
 } catch (error) {
   console.error("Firebase initialization error:", error);
-  // Fallback to avoid crashing the whole module
   app = initializeApp({
     apiKey: "invalid",
     authDomain: "invalid",
@@ -16,5 +15,6 @@ try {
     appId: "invalid"
   });
 }
+
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || undefined);

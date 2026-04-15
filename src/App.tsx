@@ -30,6 +30,26 @@ export default function App() {
   const [configError, setConfigError] = useState<string | null>(null);
 
   useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (loading) {
+        setLoading(false);
+        setConfigError("استغرق التحميل وقتاً طويلاً. قد تكون هناك مشكلة في الاتصال أو الإعدادات.");
+      }
+    }, 10000);
+
+    const handleError = (event: ErrorEvent) => {
+      console.error("Global error:", event.error);
+      setConfigError(`خطأ غير متوقع: ${event.error?.message || "حدث خطأ أثناء تشغيل التطبيق"}`);
+    };
+
+    window.addEventListener('error', handleError);
+    return () => {
+      clearTimeout(timeout);
+      window.removeEventListener('error', handleError);
+    };
+  }, [loading]);
+
+  useEffect(() => {
     document.documentElement.dir = language === 'English' ? 'ltr' : 'rtl';
     localStorage.setItem('app-language', language);
   }, [language]);
@@ -37,10 +57,12 @@ export default function App() {
   useEffect(() => {
     async function testConnection() {
       try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
+        const testDoc = doc(db, 'test', 'connection');
+        await getDocFromServer(testDoc);
       } catch (error: any) {
-        if (error.message?.includes('the client is offline')) {
-          setConfigError("خطأ في الاتصال بالسيرفر. يرجى التأكد من إعدادات Firebase.");
+        console.error("Connection test error:", error);
+        if (error.message?.includes('the client is offline') || error.message?.includes('failed-precondition')) {
+          setConfigError("خطأ في الاتصال بالسيرفر. يرجى التأكد من إعدادات Firebase وتوفر الإنترنت.");
         }
       }
     }
