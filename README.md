@@ -1,11 +1,28 @@
-<div align="center">
+# تليعراق (TeleIraq) 🇮🇶
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+تطبيق مراسلة فورية متطور مصمم خصيصاً للمستخدمين في العراق، يجمع بين السرعة، الأمان، والذكاء الاصطناعي.
 
-  <h1>Built with AI Studio</h2>
+## المميزات الرئيسية
+- **الذكاء الاصطناعي (Gemini AI)**: نظام آلي ذكي يتحدث اللهجة العراقية ويساعدك في استخدام التطبيق.
+- **المكالمات**: دعم المكالمات الصوتية والمرئية بواجهة عصرية.
+- **الوسائط**: إرسال الصور والملفات بسهولة.
+- **التخصيص**: اختر لون اسمك المفضل ليظهر للآخرين.
+- **الأمان**: يعتمد على Firebase لتوفير حماية قصوى لبياناتك ومحادثاتك.
+- **دعم كامل للغة العربية**: واجهة مستخدم مصممة من اليمين لليسار (RTL).
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## التقنيات المستخدمة
+- **React + Vite**
+- **TypeScript**
+- **Tailwind CSS**
+- **Firebase (Auth & Firestore)**
+- **Gemini AI API**
+- **Lucide Icons**
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## كيفية التشغيل محلياً
+1. قم بتحميل الكود أو عمل `git clone`.
+2. قم بتثبيت المكتبات: `npm install`.
+3. قم بإنشاء ملف `.env` وأضف مفاتيح Firebase و Gemini الخاصة بك.
+4. ابدأ التطبيق: `npm run dev`.
 
-</div>
+---
+تم التطوير بواسطة **AI Studio Build**.

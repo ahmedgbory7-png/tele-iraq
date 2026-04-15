@@ -1,0 +1,12 @@
+{
+  "name": "Remix: تليعراق",
+  "description": "تطبيق مراسلة عراقي متطور بواسطة أبو وطن",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "real-time-messaging",
+    "phone-auth"
+  ]
+}
