@@ -96,6 +96,10 @@ export default function App() {
             setProfile(newProfile);
           }
           setLoading(false);
+        }, (error) => {
+          console.error("Profile snapshot error:", error);
+          setLoading(false);
+          setConfigError(`خطأ في تحميل الملف الشخصي: ${error.message}`);
         });
       } else {
         setProfile(null);
