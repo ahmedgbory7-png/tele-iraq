@@ -39,6 +39,24 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["chatId", "senderId", "text", "createdAt"]
+    },
+    "Game": {
+      "title": "Game",
+      "description": "A multiplayer game session",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["dominoes"] },
+        "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
+        "players": { "type": "array", "items": { "type": "string" } },
+        "turn": { "type": "string" },
+        "board": { "type": "object" },
+        "hands": { "type": "object" },
+        "boneyard": { "type": "array" },
+        "winner": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "status", "players", "updatedAt"]
     }
   },
   "firestore": {
@@ -53,6 +71,10 @@
     "/chats/{chatId}/messages/{messageId}": {
       "schema": "Message",
       "description": "Messages within a chat"
+    },
+    "/games/{gameId}": {
+      "schema": "Game",
+      "description": "Game sessions"
     }
   }
 }

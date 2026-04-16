@@ -1,15 +1,18 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { db } from '@/firebase';
-import { collection, query, where, onSnapshot, orderBy, limit, getDocs, addDoc, serverTimestamp, or, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, limit, getDocs, addDoc, serverTimestamp, or, doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { Chat, UserProfile } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2 } from 'lucide-react';
+import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2, Users, Trash2 } from 'lucide-react';
 import { auth } from '@/firebase';
 import { format } from 'date-fns';
 import { Language, translations } from '@/lib/i18n';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface ChatListProps {
   activeChatId: string | null;
@@ -27,9 +30,22 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
   const [searchResults, setSearchResults] = useState<UserProfile[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [otherProfiles, setOtherProfiles] = useState<Record<string, UserProfile>>({});
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
+  const [contacts, setContacts] = useState<UserProfile[]>([]);
 
   useEffect(() => {
     if (!currentUser) return;
+
+    const fetchContacts = async () => {
+      // For simplicity, we fetch all users except current user
+      // In a real app, this would be a contacts list
+      const q = query(collection(db, 'users'), limit(50));
+      const snap = await getDocs(q);
+      setContacts(snap.docs.map(d => d.data() as UserProfile).filter(u => u.uid !== currentUser.uid));
+    };
+    fetchContacts();
 
     const q = query(
       collection(db, 'chats'),
@@ -119,6 +135,54 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
     onSelectChat(docRef.id);
     setIsSearching(false);
     setSearchQuery('');
+  };
+
+  const createGroup = async () => {
+    if (!currentUser || !groupName.trim() || selectedContacts.length === 0) return;
+
+    const newChat = {
+      participants: [currentUser.uid, ...selectedContacts],
+      updatedAt: serverTimestamp(),
+      isGroup: true,
+      groupName: groupName.trim(),
+      lastMessage: {
+        text: `تم إنشاء المجموعة بواسطة ${currentUser.displayName}`,
+        senderId: currentUser.uid,
+        createdAt: serverTimestamp()
+      }
+    };
+
+    const docRef = await addDoc(collection(db, 'chats'), newChat);
+    onSelectChat(docRef.id);
+    setIsCreateGroupOpen(false);
+    setGroupName('');
+    setSelectedContacts([]);
+  };
+
+  const deleteChat = async (chatId: string) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذه المحادثة؟')) return;
+    try {
+      await deleteDoc(doc(db, 'chats', chatId));
+      if (activeChatId === chatId) onSelectChat(null);
+    } catch (err) {
+      console.error("Error deleting chat:", err);
+    }
+  };
+
+  const handleDeleteChat = async (e: React.MouseEvent, chatId: string) => {
+    e.stopPropagation();
+    if (!currentUser) return;
+
+    if (window.confirm('هل أنت متأكد من حذف هذه الدردشة بالكامل؟')) {
+      try {
+        await deleteDoc(doc(db, 'chats', chatId));
+        if (activeChatId === chatId) {
+          onSelectChat('');
+        }
+      } catch (err) {
+        console.error("Error deleting chat:", err);
+      }
+    }
   };
 
   const [systemLoading, setSystemLoading] = useState(false);
@@ -212,6 +276,9 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
           <Button variant="ghost" size="icon" className="rounded-full hover:bg-primary/10 hover:text-primary" onClick={() => setIsSearching(!isSearching)}>
             <Edit className="h-5 w-5" />
           </Button>
+          <Button variant="ghost" size="icon" className="rounded-full hover:bg-primary/10 hover:text-primary" onClick={() => setIsCreateGroupOpen(true)} title="إنشاء مجموعة">
+            <Users className="h-5 w-5" />
+          </Button>
           <Button variant="ghost" size="icon" className="rounded-full hover:bg-primary/10 hover:text-primary" onClick={onOpenSettings}>
             <Settings className="h-5 w-5" />
           </Button>
@@ -235,18 +302,21 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
       </div>
 
       {/* List */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 no-scrollbar">
         <div className="p-2 space-y-1">
           {isSearching || searchQuery.length >= 3 ? (
             <div className="space-y-1">
               <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t.searchResults}</p>
               {searchResults.length > 0 ? (
                 searchResults.map(user => (
-                  <button
-                    key={user.uid}
-                    onClick={() => startChat(user)}
-                    className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-accent transition-colors text-right"
-                  >
+                <div
+                  key={user.uid}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => startChat(user)}
+                  onKeyDown={(e) => e.key === 'Enter' && startChat(user)}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-accent transition-colors text-right cursor-pointer"
+                >
                     <Avatar className="h-12 w-12">
                       <AvatarImage src={user.photoURL} />
                       <AvatarFallback className="text-white" style={{ backgroundColor: user.nameColor || '#8b5cf6' }}>
@@ -257,7 +327,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
                       <p className="font-semibold text-sm truncate" style={{ color: user.nameColor }}>{user.displayName}</p>
                       <p className="text-xs text-muted-foreground truncate">{user.phoneNumber}</p>
                     </div>
-                  </button>
+                  </div>
                 ))
               ) : (
                 <p className="px-3 py-4 text-sm text-center text-muted-foreground">{t.noUsersFound}</p>
@@ -265,43 +335,111 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
             </div>
           ) : (
             chats.map(chat => {
-              const otherParticipantId = chat.participants.find(p => p !== currentUser?.uid);
+              const isGroup = chat.isGroup;
+              const otherParticipantId = !isGroup ? chat.participants.find(p => p !== currentUser?.uid) : null;
               const otherProfile = otherParticipantId ? otherProfiles[otherParticipantId] : null;
               
+              const displayName = isGroup ? chat.groupName : (otherProfile?.displayName || 'مستخدم تليعراق');
+              const photoURL = isGroup ? chat.groupPhoto : otherProfile?.photoURL;
+              const nameColor = isGroup ? '#8b5cf6' : (otherProfile?.nameColor || '#8b5cf6');
+
               return (
-                <button
-                  key={chat.id}
-                  onClick={() => onSelectChat(chat.id)}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all text-right ${
-                    activeChatId === chat.id ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'hover:bg-accent'
-                  }`}
-                >
-                  <Avatar className="h-12 w-12 border-2 border-white/10">
-                    <AvatarImage src={otherProfile?.photoURL} />
-                    <AvatarFallback className="text-white" style={{ backgroundColor: otherProfile?.nameColor || '#8b5cf6' }}>
-                      {otherProfile?.displayName?.slice(0, 2).toUpperCase() || 'CH'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-baseline">
-                      <p className="font-bold text-sm truncate" style={{ color: activeChatId === chat.id ? 'white' : otherProfile?.nameColor }}>
-                        {otherProfile?.displayName || 'مستخدم تليعراق'}
-                      </p>
-                      <span className={`text-[10px] ${activeChatId === chat.id ? 'text-white/70' : 'text-muted-foreground'}`}>
-                        {chat.updatedAt?.toDate ? format(chat.updatedAt.toDate(), 'HH:mm') : ''}
-                      </span>
-                    </div>
-                    <p className={`text-xs truncate ${activeChatId === chat.id ? 'text-white/80' : 'text-muted-foreground'}`}>
-                      {chat.lastMessage?.senderId === currentUser?.uid ? t.you : ''}
-                      {chat.lastMessage?.text || (chat.lastMessage?.senderId ? 'أرسل ملفاً' : t.startChat)}
-                    </p>
+                <div key={chat.id} className="relative overflow-hidden rounded-xl">
+                  {/* Delete Action Background */}
+                  <div className="absolute inset-0 bg-destructive flex items-center justify-start px-6">
+                    <Trash2 className="h-5 w-5 text-white" />
                   </div>
-                </button>
+
+                  <motion.div
+                    drag="x"
+                    dragConstraints={{ left: 0, right: 100 }}
+                    dragElastic={0.1}
+                    onDragEnd={(e, info) => {
+                      if (info.offset.x > 80) {
+                        deleteChat(chat.id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSelectChat(chat.id)}
+                    onKeyDown={(e) => e.key === 'Enter' && onSelectChat(chat.id)}
+                    className={`relative w-full flex items-center gap-3 p-3 transition-all text-right group cursor-pointer bg-card ${
+                      activeChatId === chat.id ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'hover:bg-accent'
+                    }`}
+                  >
+                    <Avatar className="h-12 w-12 border-2 border-white/10">
+                      <AvatarImage src={photoURL} />
+                      <AvatarFallback className="text-white" style={{ backgroundColor: nameColor }}>
+                        {displayName?.slice(0, 2).toUpperCase() || 'CH'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-baseline">
+                        <p className="font-bold text-sm truncate" style={{ color: activeChatId === chat.id ? 'white' : nameColor }}>
+                          {displayName}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] ${activeChatId === chat.id ? 'text-white/70' : 'text-muted-foreground'}`}>
+                            {chat.updatedAt?.toDate ? format(chat.updatedAt.toDate(), 'HH:mm') : ''}
+                          </span>
+                        </div>
+                      </div>
+                      <p className={`text-xs truncate ${activeChatId === chat.id ? 'text-white/80' : 'text-muted-foreground'}`}>
+                        {chat.lastMessage?.senderId === currentUser?.uid ? t.you : ''}
+                        {chat.lastMessage?.text || (chat.lastMessage?.senderId ? 'أرسل ملفاً' : t.startChat)}
+                      </p>
+                    </div>
+                  </motion.div>
+                </div>
               );
             })
           )}
         </div>
       </ScrollArea>
+
+      {/* Create Group Dialog */}
+      <Dialog open={isCreateGroupOpen} onOpenChange={setIsCreateGroupOpen}>
+        <DialogContent className="sm:max-w-[425px]" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>إنشاء مجموعة جديدة</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">اسم المجموعة</label>
+              <Input 
+                placeholder="أدخل اسم المجموعة..." 
+                value={groupName}
+                onChange={(e) => setGroupName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">اختر الأعضاء</label>
+              <ScrollArea className="h-[200px] border rounded-md p-2">
+                {contacts.map(contact => (
+                  <div key={contact.uid} className="flex items-center gap-3 p-2 hover:bg-accent rounded-md cursor-pointer" onClick={() => {
+                    setSelectedContacts(prev => 
+                      prev.includes(contact.uid) 
+                        ? prev.filter(id => id !== contact.uid) 
+                        : [...prev, contact.uid]
+                    );
+                  }}>
+                    <Checkbox checked={selectedContacts.includes(contact.uid)} />
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src={contact.photoURL} />
+                      <AvatarFallback style={{ backgroundColor: contact.nameColor }}>{contact.displayName?.slice(0,2)}</AvatarFallback>
+                    </Avatar>
+                    <span className="text-sm">{contact.displayName}</span>
+                  </div>
+                ))}
+              </ScrollArea>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreateGroupOpen(false)}>إلغاء</Button>
+            <Button onClick={createGroup} disabled={!groupName.trim() || selectedContacts.length === 0}>إنشاء</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Floating Action Button */}
       {!isSearching && (

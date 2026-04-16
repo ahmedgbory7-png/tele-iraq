@@ -195,5 +195,55 @@
   html {
     @apply font-sans;
     font-size: var(--app-font-size);
+    /* Mobile optimization */
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
     }
+  body {
+    @apply bg-background text-foreground;
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    }
+  #root {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  /* Smooth scrolling for all scrollable elements */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Hide scrollbars for a cleaner mobile look */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Mobile-only container for desktop view */
+@media (min-width: 768px) {
+  #root {
+    max-width: 450px;
+    margin: 0 auto;
+    height: 100vh;
+    box-shadow: 0 0 50px rgba(0,0,0,0.1);
+    position: relative;
+    background: white;
+    border-left: 1px solid #eee;
+    border-right: 1px solid #eee;
+  }
+  body {
+    background-color: #f0f2f5;
+  }
 }

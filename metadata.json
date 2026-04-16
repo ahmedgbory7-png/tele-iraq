@@ -1,9 +1,10 @@
 {
-  "name": "Remix: تليعراق",
-  "description": "تطبيق مراسلة عراقي متطور بتصميم متوافق مع الهواتف الذكية بواسطة أبو وطن",
+  "name": "تليعراق - TeleIraq Mobile",
+  "description": "تطبيق مراسلة عراقي متطور مصمم خصيصاً للهواتف الذكية (Android/iOS) بواسطة أبو وطن",
   "requestFramePermissions": [
     "camera",
-    "microphone"
+    "microphone",
+    "geolocation"
   ],
   "majorCapabilities": [
     "real-time-messaging",

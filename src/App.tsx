@@ -18,6 +18,7 @@ import { Language, translations } from '@/lib/i18n';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 import { IraqLogo } from '@/components/IraqLogo';
+import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -146,9 +147,14 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-screen flex overflow-hidden bg-background" dir="rtl">
-      {/* Sidebar */}
-      <div className={`w-full md:w-80 border-l flex flex-col bg-card shrink-0 ${activeChatId ? 'hidden md:flex' : 'flex'}`}>
+    <div className="h-screen w-screen flex overflow-hidden bg-background relative" dir="rtl">
+      {/* Sidebar / Chat List */}
+      <motion.div 
+        initial={false}
+        animate={{ x: activeChatId ? '100%' : '0%' }}
+        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+        className="absolute inset-0 flex flex-col bg-card z-10"
+      >
         <ChatList 
           activeChatId={activeChatId} 
           onSelectChat={setActiveChatId} 
@@ -157,92 +163,54 @@ export default function App() {
           currentUser={profile}
           language={language}
         />
-      </div>
+      </motion.div>
 
-      {/* Main Content */}
-      <div className={`flex-1 flex flex-col relative ${!activeChatId ? 'hidden md:flex' : 'flex'}`}>
-        {activeChatId ? (
+      {/* Main Content / Chat Window */}
+      <motion.div 
+        initial={{ x: '-100%' }}
+        animate={{ x: activeChatId ? '0%' : '-100%' }}
+        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+        drag="x"
+        dragConstraints={{ left: 0, right: 0 }}
+        dragElastic={0.2}
+        onDragEnd={(e, info) => {
+          // In RTL, swiping to the left (negative x) is "back"
+          if (info.offset.x < -100 || info.velocity.x < -500) {
+            setActiveChatId(null);
+          }
+        }}
+        className="absolute inset-0 flex flex-col bg-background z-20 shadow-[0_0_20px_rgba(0,0,0,0.2)]"
+      >
+        {activeChatId && (
           <ChatWindow chatId={activeChatId} currentUser={profile} onClose={() => setActiveChatId(null)} />
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center telegram-bg opacity-80">
-            <div className="mb-6">
-              <IraqLogo className="w-32 h-32 drop-shadow-2xl" />
-            </div>
-            <h2 className="text-2xl font-bold mb-2">مرحباً بك في تليعراق</h2>
-            <p className="text-muted-foreground font-medium mb-6">اختر محادثة للبدء أو ابدأ محادثة تجريبية</p>
-            
-            <Button 
-              disabled={appSystemLoading}
-              onClick={async () => {
-                if (!profile || appSystemLoading) return;
-                setAppSystemLoading(true);
-                try {
-                  const systemUser = {
-                    uid: 'teleiraq-system',
-                    phoneNumber: '+964000000000',
-                    displayName: 'نظام تليعراق',
-                    status: 'الدعم الفني والآلي',
-                    nameColor: '#8b5cf6',
-                    photoURL: 'https://cdn-icons-png.flaticon.com/512/4712/4712035.png'
-                  };
-                  await setDoc(doc(db, 'users', systemUser.uid), systemUser, { merge: true });
-                  
-                  // Check if chat exists
-                  const q = query(collection(db, 'chats'), where('participants', 'array-contains', profile.uid));
-                  const snap = await getDocs(q);
-                  const existing = snap.docs.find(d => d.data().participants.includes(systemUser.uid));
-                  
-                  if (existing) {
-                    setActiveChatId(existing.id);
-                  } else {
-                    const newChat = {
-                      participants: [profile.uid, systemUser.uid],
-                      updatedAt: serverTimestamp(),
-                      lastMessage: {
-                        text: 'أهلاً بك في تليعراق! أنا النظام الآلي.',
-                        senderId: systemUser.uid,
-                        createdAt: serverTimestamp()
-                      }
-                    };
-                    const docRef = await addDoc(collection(db, 'chats'), newChat);
-                    
-                    // Add the actual message to the subcollection
-                    await addDoc(collection(db, 'chats', docRef.id, 'messages'), {
-                      chatId: docRef.id,
-                      senderId: systemUser.uid,
-                      text: 'أهلاً بك في تليعراق! أنا النظام الآلي. كيف يمكنني مساعدتك اليوم؟ 🇮🇶',
-                      type: 'text',
-                      createdAt: serverTimestamp()
-                    });
-
-                    setActiveChatId(docRef.id);
-                  }
-                } catch (err) {
-                  console.error("System chat error in App:", err);
-                } finally {
-                  setAppSystemLoading(false);
-                }
-              }}
-              className="purple-gradient h-12 px-8 rounded-full font-bold shadow-lg hover:scale-105 transition-transform"
-            >
-              {appSystemLoading ? <Loader2 className="animate-spin mr-2" /> : null}
-              ابدأ محادثة تجريبية مع النظام
-            </Button>
-
-            <p className="text-xs text-muted-foreground mt-8">تطوير: أبو وطن</p>
-          </div>
         )}
+      </motion.div>
 
-        {/* Profile Overlay */}
+      {/* Profile Overlay */}
+      <AnimatePresence>
         {showProfile && profile && (
-          <div className="absolute inset-0 z-50 bg-background">
+          <motion.div 
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="absolute inset-0 z-50 bg-background"
+          >
             <Profile profile={profile} onClose={() => setShowProfile(false)} />
-          </div>
+          </motion.div>
         )}
+      </AnimatePresence>
 
-        {/* Settings Overlay */}
+      {/* Settings Overlay */}
+      <AnimatePresence>
         {showSettings && profile && (
-          <div className="absolute inset-0 z-50 bg-background">
+          <motion.div 
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="absolute inset-0 z-50 bg-background"
+          >
             <Settings 
               profile={profile} 
               onClose={() => setShowSettings(false)} 
@@ -253,9 +221,9 @@ export default function App() {
               language={language}
               onLanguageChange={setLanguage}
             />
-          </div>
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
     </div>
   );
 }
