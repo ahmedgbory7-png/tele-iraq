@@ -28,6 +28,9 @@ export function Auth() {
   useEffect(() => {
     const initRecaptcha = () => {
       try {
+        const container = document.getElementById('recaptcha-container');
+        if (!container) return;
+
         if (!(window as any).recaptchaVerifier) {
           (window as any).recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
             size: 'invisible',
@@ -36,22 +39,31 @@ export function Auth() {
             },
             'expired-callback': () => {
               console.log('Recaptcha expired');
-              (window as any).recaptchaVerifier = null;
+              if ((window as any).recaptchaVerifier) {
+                (window as any).recaptchaVerifier.clear();
+                (window as any).recaptchaVerifier = null;
+              }
               initRecaptcha();
             }
           });
         }
       } catch (err) {
         console.error('Recaptcha init error:', err);
-        setError('فشل تهيئة نظام التحقق (Recaptcha).');
+        setError('فشل تهيئة نظام التحقق (Recaptcha). يرجى تحديث الصفحة.');
       }
     };
 
-    initRecaptcha();
+    // Small delay to ensure DOM is ready
+    const timer = setTimeout(initRecaptcha, 500);
 
     return () => {
+      clearTimeout(timer);
       if ((window as any).recaptchaVerifier) {
-        (window as any).recaptchaVerifier.clear();
+        try {
+          (window as any).recaptchaVerifier.clear();
+        } catch (e) {
+          console.warn("Error clearing Recaptcha:", e);
+        }
         (window as any).recaptchaVerifier = null;
       }
     };
@@ -60,22 +72,39 @@ export function Auth() {
   const handleSendCode = async () => {
     if (!phoneNumber) return setError('يرجى إدخال رقم الهاتف');
     
+    // Ensure recaptcha is ready
+    if (!(window as any).recaptchaVerifier) {
+       try {
+         (window as any).recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' });
+       } catch (e) {
+         return setError('فشل تهيئة نظام التحقق. يرجى تحديث الصفحة.');
+       }
+    }
+
     const fullPhoneNumber = selectedCountry.code + phoneNumber.replace(/^0+/, '');
     
     setLoading(true);
     setError('');
     try {
       const appVerifier = (window as any).recaptchaVerifier;
-      if (!appVerifier) throw new Error('Recaptcha not initialized');
-      
       const result = await signInWithPhoneNumber(auth, fullPhoneNumber, appVerifier);
       setConfirmationResult(result);
     } catch (err: any) {
       console.error('Sign in error:', err);
-      if (err.code === 'auth/unauthorized-domain') {
+      
+      // Handle internal error by resetting recaptcha
+      if (err.code === 'auth/internal-error') {
+        if ((window as any).recaptchaVerifier) {
+          (window as any).recaptchaVerifier.clear();
+          (window as any).recaptchaVerifier = null;
+        }
+        setError('حدث خطأ داخلي في نظام التحقق. يرجى المحاولة مرة أخرى أو تحديث الصفحة.');
+      } else if (err.code === 'auth/unauthorized-domain') {
         setError('هذا النطاق (Domain) غير مصرح به في إعدادات Firebase. يرجى إضافته في لوحة التحكم.');
       } else if (err.code === 'auth/invalid-phone-number') {
         setError('رقم الهاتف غير صحيح. تأكد من كتابته بشكل سليم.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('تم إرسال الكثير من الطلبات لهذا الرقم. يرجى المحاولة لاحقاً.');
       } else {
         setError(err.message || 'فشل إرسال الرمز. حاول مرة أخرى.');
       }

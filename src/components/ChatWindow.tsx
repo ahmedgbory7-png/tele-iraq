@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Phone, Video, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2 } from 'lucide-react';
+import { Send, Phone, Video, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, Volume2, VolumeX, VideoOff, Camera } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
@@ -27,6 +27,8 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
   const [participants, setParticipants] = useState<Record<string, UserProfile>>({});
   const [isCalling, setIsCalling] = useState(false);
   const [callType, setCallType] = useState<'voice' | 'video'>('voice');
+  const [speakerOn, setSpeakerOn] = useState(false);
+  const [videoOn, setVideoOn] = useState(true);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -414,6 +416,7 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
 
   const startCall = (type: 'voice' | 'video') => {
     setCallType(type);
+    setVideoOn(type === 'video');
     setIsCalling(true);
   };
 
@@ -422,17 +425,23 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
       {/* Header */}
       <div className="p-3 bg-card border-b flex items-center justify-between shadow-sm z-10">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="rounded-full md:hidden" onClick={onClose}>
-            <ArrowLeft className="h-5 w-5" />
+          <Button variant="ghost" size="icon" className="rounded-full" onClick={onClose} title="رجوع">
+            <ArrowRight className="h-6 w-6 text-primary" />
           </Button>
           <Avatar className="h-10 w-10 border-2 border-primary/10">
             <AvatarImage src={chatData?.isGroup ? chatData.groupPhoto : otherProfile?.photoURL} />
-            <AvatarFallback className="text-white font-bold" style={{ backgroundColor: (chatData?.isGroup ? '#8b5cf6' : otherProfile?.nameColor) || '#8b5cf6' }}>
+            <AvatarFallback 
+              className={`text-white font-bold ${(!chatData?.isGroup && otherProfile?.nameColor === 'magic') ? 'magic-color-bg' : ''}`} 
+              style={{ backgroundColor: (chatData?.isGroup ? '#8b5cf6' : (otherProfile?.nameColor === 'magic' ? undefined : otherProfile?.nameColor)) || '#8b5cf6' }}
+            >
               {(chatData?.isGroup ? chatData.groupName : otherProfile?.displayName)?.slice(0, 2).toUpperCase() || 'CH'}
             </AvatarFallback>
           </Avatar>
           <div className="flex flex-col">
-            <span className="font-bold text-sm" style={{ color: chatData?.isGroup ? '#8b5cf6' : otherProfile?.nameColor }}>
+            <span 
+              className={`font-bold text-sm ${(!chatData?.isGroup && otherProfile?.nameColor === 'magic') ? 'magic-color-text' : ''}`} 
+              style={{ color: (chatData?.isGroup ? '#8b5cf6' : (otherProfile?.nameColor === 'magic' ? undefined : otherProfile?.nameColor)) }}
+            >
               {chatData?.isGroup ? chatData.groupName : (otherProfile?.displayName || 'مستخدم تليعراق')}
             </span>
             <span className="text-[10px] text-primary font-medium">
@@ -468,21 +477,13 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
           >
             <Video className="h-5 w-5" />
           </Button>
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-            onClick={onClose}
-            title="خروج من المحادثة"
-          >
-            <ArrowRight className="h-5 w-5" />
-          </Button>
         </div>
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-4 no-scrollbar">
-        <div className="space-y-2 max-w-3xl mx-auto pb-4">
+      <ScrollArea className="flex-1 no-scrollbar bg-transparent">
+        <div className="p-4 min-h-full">
+          <div className="space-y-2 max-w-3xl mx-auto pb-4">
           <AnimatePresence initial={false}>
             {messages.map((msg, idx) => {
               const isMe = msg.senderId === currentUser?.uid;
@@ -512,7 +513,10 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
                       {showAvatar && (
                         <Avatar className="h-8 w-8">
                           <AvatarImage src={senderProfile?.photoURL} />
-                          <AvatarFallback className="text-white text-[10px]" style={{ backgroundColor: senderProfile?.nameColor || '#8b5cf6' }}>
+                          <AvatarFallback 
+                            className={`text-white text-[10px] ${senderProfile?.nameColor === 'magic' ? 'magic-color-bg' : ''}`} 
+                            style={{ backgroundColor: senderProfile?.nameColor === 'magic' ? undefined : (senderProfile?.nameColor || '#8b5cf6') }}
+                          >
                             {senderProfile?.displayName?.slice(0, 2).toUpperCase() || '??'}
                           </AvatarFallback>
                         </Avatar>
@@ -535,7 +539,10 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
                       } ${!isLastInGroup ? (isMe ? 'rounded-bl-2xl' : 'rounded-br-2xl') : ''}`}
                     >
                       {chatData?.isGroup && !isMe && showAvatar && (
-                        <p className="text-[10px] font-bold mb-0.5" style={{ color: senderProfile?.nameColor }}>
+                        <p 
+                          className={`text-[10px] font-bold mb-0.5 ${senderProfile?.nameColor === 'magic' ? 'magic-color-text' : ''}`} 
+                          style={{ color: senderProfile?.nameColor === 'magic' ? undefined : senderProfile?.nameColor }}
+                        >
                           {senderProfile?.displayName}
                         </p>
                       )}
@@ -713,7 +720,8 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
           )}
           <div ref={scrollRef} />
         </div>
-      </ScrollArea>
+      </div>
+    </ScrollArea>
 
       {/* Input */}
       <div className="p-4 bg-card border-t relative">
@@ -787,40 +795,114 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
       </div>
 
       {/* Group Call Overlay */}
-      {isCalling && (
-        <div className="absolute inset-0 z-50 bg-black/90 flex flex-col items-center justify-center text-white p-6">
-          <div className="flex-1 flex flex-col items-center justify-center gap-6">
-            <div className="relative">
-              <Avatar className="h-32 w-32 border-4 border-primary animate-pulse">
-                <AvatarImage src={otherProfile?.photoURL} />
-                <AvatarFallback className="text-4xl font-bold" style={{ backgroundColor: otherProfile?.nameColor }}>
-                  {otherProfile?.displayName?.slice(0, 2).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div className={`absolute -top-2 -right-2 p-2 rounded-full ${callType === 'video' ? 'bg-blue-500' : 'bg-green-500'}`}>
-                {callType === 'video' ? <Video className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
+      <AnimatePresence>
+        {isCalling && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 1.1 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className="absolute inset-0 z-[200] bg-zinc-950 flex flex-col text-white overflow-hidden"
+          >
+            {/* Video Background / Preview */}
+            {callType === 'video' && videoOn ? (
+              <div className="absolute inset-0 z-0">
+                <img 
+                  src={`https://picsum.photos/seed/${otherProfile?.uid}/1080/1920?blur=2`} 
+                  className="w-full h-full object-cover opacity-40"
+                  alt="Remote Video"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute bottom-24 right-4 w-32 h-48 bg-black rounded-xl border-2 border-white/20 overflow-hidden shadow-2xl z-20">
+                  <img 
+                    src={`https://picsum.photos/seed/${currentUser?.uid}/300/500`} 
+                    className="w-full h-full object-cover"
+                    alt="Local Preview"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="absolute top-2 right-2 bg-black/40 p-1 rounded">
+                    <Camera className="w-3 h-3" />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="absolute inset-0 z-0 purple-gradient opacity-10"></div>
+            )}
+
+            <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6 gap-6">
+              <div className="relative mt-auto">
+                <Avatar className="h-32 w-32 border-4 border-primary shadow-[0_0_50px_rgba(139,92,246,0.3)]">
+                  <AvatarImage src={otherProfile?.photoURL} />
+                  <AvatarFallback 
+                    className={`text-4xl font-bold text-white ${otherProfile?.nameColor === 'magic' ? 'magic-color-bg' : 'bg-zinc-800'}`}
+                  >
+                    {otherProfile?.displayName?.slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className={`absolute -top-2 -right-2 p-2 rounded-full shadow-lg ${callType === 'video' ? 'bg-blue-500' : 'bg-green-500'}`}>
+                  {callType === 'video' ? <Video className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
+                </div>
+              </div>
+              <div className="text-center">
+                <h3 className={`text-2xl font-bold mb-1 ${otherProfile?.nameColor === 'magic' ? 'magic-color-text' : ''}`}>
+                  {otherProfile?.displayName}
+                </h3>
+                <p className="text-primary/80 animate-pulse font-medium">
+                  {callType === 'video' ? 'مكالمة فيديو جارية...' : 'مكالمة صوتية جارية...'}
+                </p>
+                <div className="mt-4 flex items-center justify-center gap-2 text-xs text-white/40">
+                  <span className="w-2 h-2 rounded-full bg-green-500 animate-ping"></span>
+                  متصل الآن
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-3 gap-6 mt-auto mb-12 w-full max-w-sm">
+                <div className="flex flex-col items-center gap-2">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className={`w-14 h-14 rounded-full transition-all ${speakerOn ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white'}`}
+                    onClick={() => setSpeakerOn(!speakerOn)}
+                  >
+                    {speakerOn ? <Volume2 className="w-6 h-6" /> : <VolumeX className="w-6 h-6" />}
+                  </Button>
+                  <span className="text-[10px] opacity-60">مكبر الصوت</span>
+                </div>
+
+                <div className="flex flex-col items-center gap-2">
+                  <Button 
+                    variant="destructive" 
+                    size="icon" 
+                    className="w-16 h-16 rounded-full shadow-2xl shadow-red-500/40 hover:scale-105 active:scale-95" 
+                    onClick={() => setIsCalling(false)}
+                  >
+                    <Phone className="w-8 h-8 rotate-[135deg]" />
+                  </Button>
+                  <span className="text-[10px] opacity-80 text-red-400 font-bold">إنهاء</span>
+                </div>
+
+                <div className="flex flex-col items-center gap-2">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className={`w-14 h-14 rounded-full transition-all ${callType === 'video' && videoOn ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white'}`}
+                    onClick={() => {
+                      if (callType === 'voice') {
+                        setCallType('video');
+                        setVideoOn(true);
+                      } else {
+                        setVideoOn(!videoOn);
+                      }
+                    }}
+                  >
+                    {videoOn && callType === 'video' ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
+                  </Button>
+                  <span className="text-[10px] opacity-60">{callType === 'video' ? 'الكاميرا' : 'فيديو'}</span>
+                </div>
               </div>
             </div>
-            <div className="text-center">
-              <h3 className="text-2xl font-bold mb-1">{otherProfile?.displayName}</h3>
-              <p className="text-primary animate-pulse">جاري الاتصال {callType === 'video' ? 'فيديو' : 'صوتي'}...</p>
-            </div>
-          </div>
-          <div className="flex gap-8 mb-12">
-            <Button variant="destructive" size="icon" className="w-16 h-16 rounded-full shadow-2xl shadow-red-500/20" onClick={() => setIsCalling(false)}>
-              <Phone className="w-8 h-8 rotate-[135deg]" />
-            </Button>
-            <Button 
-              variant="secondary" 
-              size="icon" 
-              className={`w-16 h-16 rounded-full bg-white/10 hover:bg-white/20 border-none ${callType === 'video' ? 'text-blue-400' : ''}`}
-              onClick={() => setCallType(callType === 'video' ? 'voice' : 'video')}
-            >
-              <Video className="w-8 h-8" />
-            </Button>
-          </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Domino Game Overlay */}
       <AnimatePresence>

@@ -36,7 +36,14 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
   const [contacts, setContacts] = useState<UserProfile[]>([]);
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      setChats([]);
+      setOtherProfiles({});
+      setContacts([]);
+      setSearchResults([]);
+      setSearchQuery('');
+      return;
+    }
 
     const fetchContacts = async () => {
       // For simplicity, we fetch all users except current user
@@ -204,13 +211,16 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
       // Ensure system user exists in Firestore
       await setDoc(doc(db, 'users', systemUser.uid), systemUser, { merge: true });
       
-      // Check if chat already exists in DB directly to be sure
+      // Check if private chat already exists in DB directly to be sure
       const q = query(
         collection(db, 'chats'), 
         where('participants', 'array-contains', currentUser.uid)
       );
       const snap = await getDocs(q);
-      const existing = snap.docs.find(d => d.data().participants.includes(systemUser.uid));
+      const existing = snap.docs.find(d => {
+        const data = d.data();
+        return !data.isGroup && data.participants.includes(systemUser.uid) && data.participants.length === 2;
+      });
 
       if (existing) {
         onSelectChat(existing.id);
@@ -319,12 +329,20 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
                 >
                     <Avatar className="h-12 w-12">
                       <AvatarImage src={user.photoURL} />
-                      <AvatarFallback className="text-white" style={{ backgroundColor: user.nameColor || '#8b5cf6' }}>
+                      <AvatarFallback 
+                        className={`text-white ${user.nameColor === 'magic' ? 'magic-color-bg' : ''}`} 
+                        style={{ backgroundColor: user.nameColor === 'magic' ? undefined : (user.nameColor || '#8b5cf6') }}
+                      >
                         {user.displayName?.slice(0, 2).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm truncate" style={{ color: user.nameColor }}>{user.displayName}</p>
+                      <p 
+                        className={`font-semibold text-sm truncate ${user.nameColor === 'magic' ? 'magic-color-text' : ''}`} 
+                        style={{ color: user.nameColor === 'magic' ? undefined : user.nameColor }}
+                      >
+                        {user.displayName}
+                      </p>
                       <p className="text-xs text-muted-foreground truncate">{user.phoneNumber}</p>
                     </div>
                   </div>
@@ -369,13 +387,19 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
                   >
                     <Avatar className="h-12 w-12 border-2 border-white/10">
                       <AvatarImage src={photoURL} />
-                      <AvatarFallback className="text-white" style={{ backgroundColor: nameColor }}>
+                      <AvatarFallback 
+                        className={`text-white ${nameColor === 'magic' ? 'magic-color-bg' : ''}`} 
+                        style={{ backgroundColor: nameColor === 'magic' ? undefined : nameColor }}
+                      >
                         {displayName?.slice(0, 2).toUpperCase() || 'CH'}
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-baseline">
-                        <p className="font-bold text-sm truncate" style={{ color: activeChatId === chat.id ? 'white' : nameColor }}>
+                        <p 
+                          className={`font-bold text-sm truncate ${nameColor === 'magic' ? (activeChatId === chat.id ? '' : 'magic-color-text') : ''}`} 
+                          style={{ color: activeChatId === chat.id ? 'white' : (nameColor === 'magic' ? undefined : nameColor) }}
+                        >
                           {displayName}
                         </p>
                         <div className="flex items-center gap-2">

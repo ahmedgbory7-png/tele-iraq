@@ -5,7 +5,7 @@ import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { ArrowLeft, Camera, Check, Loader2 } from 'lucide-react';
+import { ArrowRight, Camera, Check, Loader2, Lock } from 'lucide-react';
 
 interface ProfileProps {
   profile: UserProfile;
@@ -19,11 +19,33 @@ export function Profile({ profile, onClose }: ProfileProps) {
   const [nameColor, setNameColor] = useState(profile.nameColor || '#8b5cf6');
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [isMagicUnlocked, setIsMagicUnlocked] = useState(() => localStorage.getItem('magic-unlocked') === 'true' || profile.nameColor === 'magic');
 
   const colors = [
     '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', 
     '#10b981', '#3b82f6', '#6366f1', '#141414'
   ];
+
+  const handleColorClick = (color: string) => {
+    setNameColor(color);
+  };
+
+  const handleMagicClick = () => {
+    if (isMagicUnlocked) {
+      setNameColor('magic');
+      return;
+    }
+
+    const code = window.prompt('أدخل الكود السري لفتح اللون السحري:');
+    if (code === 'asd') {
+      setIsMagicUnlocked(true);
+      localStorage.setItem('magic-unlocked', 'true');
+      setNameColor('magic');
+      alert('تم فتح اللون السحري بنجاح! 🌈');
+    } else if (code !== null) {
+      alert('الكود غير صحيح! حاول مرة أخرى.');
+    }
+  };
 
   const handleSave = async () => {
     setLoading(true);
@@ -59,7 +81,7 @@ export function Profile({ profile, onClose }: ProfileProps) {
       {/* Header */}
       <div className="p-4 flex items-center gap-4 border-b bg-card">
         <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full">
-          <ArrowLeft className="h-6 w-6" />
+          <ArrowRight className="h-6 w-6 text-primary" />
         </Button>
         <h2 className="text-xl font-bold">إعدادات الملف الشخصي</h2>
       </div>
@@ -70,7 +92,10 @@ export function Profile({ profile, onClose }: ProfileProps) {
           <div className="relative group cursor-pointer" onClick={() => document.getElementById('avatar-upload')?.click()}>
             <Avatar className="h-32 w-32 border-4 border-primary/10 shadow-xl group-hover:opacity-80 transition-opacity">
               <AvatarImage src={photoURL} />
-              <AvatarFallback className="text-4xl font-bold text-white" style={{ backgroundColor: nameColor }}>
+              <AvatarFallback 
+                className={`text-4xl font-bold text-white ${nameColor === 'magic' ? 'magic-color-bg' : ''}`} 
+                style={{ backgroundColor: nameColor === 'magic' ? undefined : nameColor }}
+              >
                 {displayName.slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
@@ -122,11 +147,22 @@ export function Profile({ profile, onClose }: ProfileProps) {
               {colors.map(color => (
                 <button
                   key={color}
-                  onClick={() => setNameColor(color)}
+                  onClick={() => handleColorClick(color)}
                   className={`w-8 h-8 rounded-full border-2 transition-transform ${nameColor === color ? 'border-primary scale-125 shadow-md' : 'border-transparent'}`}
                   style={{ backgroundColor: color }}
                 />
               ))}
+              <button
+                onClick={handleMagicClick}
+                className={`group relative w-12 h-8 rounded-xl border-2 transition-all flex items-center justify-center overflow-hidden active:scale-95 ${nameColor === 'magic' ? 'border-primary scale-110 shadow-lg' : 'border-dashed border-muted-foreground/50'}`}
+              >
+                <div className={`absolute inset-0 magic-color-bg opacity-30 ${!isMagicUnlocked ? 'grayscale' : ''}`} />
+                {isMagicUnlocked ? (
+                  <span className="relative text-[10px] font-bold text-primary z-10">السحري</span>
+                ) : (
+                  <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
+                )}
+              </button>
             </div>
           </div>
 

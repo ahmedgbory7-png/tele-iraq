@@ -1,112 +1,45 @@
 @import "tailwindcss";
-
-@theme {
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-}
-
-:root {
-  --background: 270 20% 98%;
-  --foreground: 270 10% 10%;
-  --card: 0 0% 100%;
-  --card-foreground: 270 10% 10%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 270 10% 10%;
-  --primary: 270 70% 50%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 270 30% 96%;
-  --secondary-foreground: 270 70% 30%;
-  --muted: 270 20% 94%;
-  --muted-foreground: 270 10% 40%;
-  --accent: 270 70% 95%;
-  --accent-foreground: 270 70% 40%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 270 20% 90%;
-  --input: 270 20% 90%;
-  --ring: 270 70% 50%;
-  --radius: 0.75rem;
-  --app-font-size: 16px;
-}
-
-.dark {
-  --background: 270 20% 5%;
-  --foreground: 270 10% 98%;
-  --card: 270 20% 8%;
-  --card-foreground: 270 10% 98%;
-  --popover: 270 20% 8%;
-  --popover-foreground: 270 10% 98%;
-  --primary: 270 70% 60%;
-  --primary-foreground: 270 10% 10%;
-  --secondary: 270 20% 15%;
-  --secondary-foreground: 270 10% 98%;
-  --muted: 270 20% 15%;
-  --muted-foreground: 270 10% 60%;
-  --accent: 270 20% 15%;
-  --accent-foreground: 270 10% 98%;
-  --destructive: 0 62% 30%;
-  --destructive-foreground: 270 10% 98%;
-  --border: 270 20% 20%;
-  --input: 270 20% 20%;
-  --ring: 270 70% 60%;
-}
-
-@layer base {
-  * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
-}
-
-.telegram-bg {
-  background-color: #f4f4f7;
-  background-image: url("https://www.transparenttextures.com/patterns/cubes.png");
-}
-
-.purple-gradient {
-  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
-}
-
 @import "@fontsource-variable/geist";
 
-@custom-variant dark (&:is(.dark *));
-
 @theme inline {
-    --font-heading: var(--font-sans);
     --font-sans: 'Geist Variable', sans-serif;
-    --color-sidebar-ring: var(--sidebar-ring);
-    --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
-    --color-ring: var(--ring);
-    --color-input: var(--input);
-    --color-border: var(--border);
-    --color-destructive: var(--destructive);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-accent: var(--accent);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-muted: var(--muted);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-secondary: var(--secondary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-primary: var(--primary);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-popover: var(--popover);
-    --color-card-foreground: var(--card-foreground);
-    --color-card: var(--card);
-    --color-foreground: var(--foreground);
-    --color-background: var(--background);
+    --font-heading: var(--font-sans);
+    
+    --color-background: hsl(var(--background));
+    --color-foreground: hsl(var(--foreground));
+    --color-card: hsl(var(--card));
+    --color-card-foreground: hsl(var(--card-foreground));
+    --color-popover: hsl(var(--popover));
+    --color-popover-foreground: hsl(var(--popover-foreground));
+    --color-primary: hsl(var(--primary));
+    --color-primary-foreground: hsl(var(--primary-foreground));
+    --color-secondary: hsl(var(--secondary));
+    --color-secondary-foreground: hsl(var(--secondary-foreground));
+    --color-muted: hsl(var(--muted));
+    --color-muted-foreground: hsl(var(--muted-foreground));
+    --color-accent: hsl(var(--accent));
+    --color-accent-foreground: hsl(var(--accent-foreground));
+    --color-destructive: hsl(var(--destructive));
+    --color-destructive-foreground: hsl(var(--destructive-foreground));
+    --color-border: hsl(var(--border));
+    --color-input: hsl(var(--input));
+    --color-ring: hsl(var(--ring));
+    
+    --color-chart-1: hsl(var(--chart-1));
+    --color-chart-2: hsl(var(--chart-2));
+    --color-chart-3: hsl(var(--chart-3));
+    --color-chart-4: hsl(var(--chart-4));
+    --color-chart-5: hsl(var(--chart-5));
+    
+    --color-sidebar: hsl(var(--sidebar));
+    --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+    --color-sidebar-primary: hsl(var(--sidebar-primary));
+    --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+    --color-sidebar-accent: hsl(var(--sidebar-accent));
+    --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+    --color-sidebar-border: hsl(var(--sidebar-border));
+    --color-sidebar-ring: hsl(var(--sidebar-ring));
+
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -132,6 +65,7 @@
     --accent: 240 4.8% 95.9%;
     --accent-foreground: 240 5.9% 10%;
     --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
     --ring: 240 10% 3.9%;
@@ -149,6 +83,7 @@
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+    --app-font-size: 16px;
 }
 
 .dark {
@@ -167,6 +102,7 @@
     --accent: 240 3.7% 15.9%;
     --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
     --ring: 240 4.9% 83.9%;
@@ -188,19 +124,16 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
-  body {
-    @apply bg-background text-foreground;
-    }
+    -webkit-overflow-scrolling: touch;
+  }
   html {
     @apply font-sans;
     font-size: var(--app-font-size);
-    /* Mobile optimization */
     -webkit-tap-highlight-color: transparent;
     overflow: hidden;
     height: 100%;
     width: 100%;
-    }
+  }
   body {
     @apply bg-background text-foreground;
     overflow: hidden;
@@ -208,30 +141,82 @@
     width: 100%;
     margin: 0;
     padding: 0;
-    }
+  }
   #root {
     height: 100%;
     width: 100%;
     display: flex;
     flex-direction: column;
   }
-  
-  /* Smooth scrolling for all scrollable elements */
-  * {
-    -webkit-overflow-scrolling: touch;
-  }
-
-  /* Hide scrollbars for a cleaner mobile look */
-  .no-scrollbar::-webkit-scrollbar {
-    display: none;
-  }
-  .no-scrollbar {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
 }
 
-/* Mobile-only container for desktop view */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.telegram-bg {
+  background-color: #f4f4f7;
+  background-image: url("https://www.transparenttextures.com/patterns/cubes.png");
+  background-repeat: repeat;
+  background-attachment: fixed;
+  background-size: auto;
+}
+
+.purple-gradient {
+  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+}
+
+/* Magic RGB Color Effect */
+.magic-color-bg {
+  background: linear-gradient(
+    270deg,
+    #ff0000,
+    #ff8000,
+    #ffff00,
+    #00ff00,
+    #00ffff,
+    #0000ff,
+    #8000ff,
+    #ff00ff,
+    #ff0000
+  );
+  background-size: 400% 400%;
+  animation: magic-bg-anim 8s ease infinite;
+}
+
+.magic-color-text {
+  background: linear-gradient(
+    270deg,
+    #ff0000,
+    #ff8000,
+    #ffff00,
+    #00ff00,
+    #00ffff,
+    #0000ff,
+    #8000ff,
+    #ff00ff,
+    #ff0000
+  );
+  background-size: 400% 400%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 8s ease infinite;
+  font-weight: bold;
+}
+
+@keyframes magic-bg-anim {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@custom-variant dark (&:is(.dark *));
+
+/* Desktop containment */
 @media (min-width: 768px) {
   #root {
     max-width: 450px;
@@ -243,7 +228,14 @@
     border-left: 1px solid #eee;
     border-right: 1px solid #eee;
   }
-  body {
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     background-color: #f0f2f5;
+    z-index: -1;
   }
 }

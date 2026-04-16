@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer, onSnapshot, collection, query, where, getDocs, addDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer, onSnapshot, collection, query, where, getDocs, addDoc, limit } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Auth } from '@/components/Auth';
 import { ChatList } from '@/components/ChatList';
@@ -33,14 +33,22 @@ export default function App() {
   useEffect(() => {
     const timeout = setTimeout(() => {
       if (loading) {
+        // Just set loading false and log a warning instead of a hard error screen
+        // if we still haven't received auth state.
+        console.warn("Auth initialization is taking longer than expected...");
         setLoading(false);
-        setConfigError("استغرق التحميل وقتاً طويلاً. قد تكون هناك مشكلة في الاتصال أو الإعدادات.");
       }
-    }, 10000);
+    }, 20000);
 
     const handleError = (event: ErrorEvent) => {
+      // Don't show hard error screen for generic script errors or benign warnings
+      if (event.message?.includes('ResizeObserver') || event.message?.includes('Extension')) return;
+      
       console.error("Global error:", event.error);
-      setConfigError(`خطأ غير متوقع: ${event.error?.message || "حدث خطأ أثناء تشغيل التطبيق"}`);
+      // We'll log it but not block the app unless it's a major missing config error
+      if (event.error?.message?.includes('apiKey') || event.error?.message?.includes('projectId')) {
+        setConfigError(`إعدادات Firebase غير مكتملة: ${event.error?.message}`);
+      }
     };
 
     window.addEventListener('error', handleError);
@@ -58,12 +66,16 @@ export default function App() {
   useEffect(() => {
     async function testConnection() {
       try {
-        const testDoc = doc(db, 'test', 'connection');
-        await getDocFromServer(testDoc);
+        // Just checking if we can get anything from a known collection
+        const q = query(collection(db, 'users'), limit(1));
+        await getDocs(q);
+        console.log("Firestore connection verified");
       } catch (error: any) {
-        console.error("Connection test error:", error);
-        if (error.message?.includes('the client is offline') || error.message?.includes('failed-precondition')) {
-          setConfigError("خطأ في الاتصال بالسيرفر. يرجى التأكد من إعدادات Firebase وتوفر الإنترنت.");
+        console.warn("Connection test warning:", error);
+        // Only show fatal error if it's clearly a permission/offline issue on bootstrap
+        if (error.message?.includes('the client is offline') || error.message?.includes('Missing or insufficient permissions')) {
+          // We don't necessarily want to block the whole app if it's just one request,
+          // but if we can't get current user profile later, that will handle it.
         }
       }
     }
@@ -104,6 +116,9 @@ export default function App() {
         });
       } else {
         setProfile(null);
+        setActiveChatId(null);
+        setShowProfile(false);
+        setShowSettings(false);
         setLoading(false);
       }
     });
@@ -114,22 +129,32 @@ export default function App() {
     };
   }, []);
 
-  const [appSystemLoading, setAppSystemLoading] = useState(false);
+  const isSubPageActive = !!activeChatId || showProfile || showSettings;
+  const isLayer2Active = showProfile || showSettings;
 
   if (configError) {
+    const handleClearAndReload = () => {
+      localStorage.clear();
+      window.location.reload();
+    };
+
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-background p-6 text-center">
         <AlertCircle className="h-16 w-16 text-destructive mb-4" />
-        <h1 className="text-2xl font-bold mb-2">مشكلة في التشغيل</h1>
-        <p className="text-muted-foreground max-w-md mb-4">{configError}</p>
-        <div className="text-xs text-left bg-muted p-4 rounded-lg overflow-auto max-w-full font-mono">
-          <p>Project ID: {auth.app.options.projectId}</p>
-          <p>Auth Domain: {auth.app.options.authDomain}</p>
-          <p>Platform: {navigator.userAgent.includes('Android') ? 'Android' : 'Web/Other'}</p>
-          <p>URL: {window.location.href}</p>
+        <h1 className="text-2xl font-bold mb-2">تنبيه النظام</h1>
+        <p className="text-muted-foreground max-w-md mb-6">{configError}</p>
+        
+        <div className="flex flex-col gap-2 w-full max-w-xs">
+          <Button onClick={() => window.location.reload()} variant="default">إعادة المحاولة</Button>
+          <Button onClick={handleClearAndReload} variant="outline">مسح الذاكرة وإعادة التشغيل</Button>
+          <Button onClick={() => setConfigError(null)} variant="ghost" className="text-xs text-muted-foreground">تجاوز الخطأ (قد لا يعمل التطبيق)</Button>
         </div>
-        <p className="text-sm text-muted-foreground mt-4">تأكد من إضافة <b>localhost</b> و <b>{window.location.hostname}</b> إلى Authorized Domains في Firebase Console.</p>
-        <Button onClick={() => window.location.reload()} className="mt-6">إعادة المحاولة</Button>
+
+        <div className="mt-12 text-[10px] text-left opacity-30 font-mono grayscale hover:grayscale-0 transition-all">
+          <p>Dev Info:</p>
+          <p>ID: {auth.app.options.projectId}</p>
+          <p>URL: {window.location.hostname}</p>
+        </div>
       </div>
     );
   }
@@ -147,13 +172,18 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-screen flex overflow-hidden bg-background relative" dir="rtl">
-      {/* Sidebar / Chat List */}
+    <div className="h-screen w-screen flex overflow-hidden bg-background relative select-none" dir="rtl">
+      {/* Page 1: Chat List */}
       <motion.div 
         initial={false}
-        animate={{ x: activeChatId ? '100%' : '0%' }}
+        animate={{ 
+          x: isSubPageActive ? '100.1%' : '0%',
+          opacity: isSubPageActive ? 0 : 1,
+          scale: isSubPageActive ? 0.95 : 1
+        }}
         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
         className="absolute inset-0 flex flex-col bg-card z-10"
+        style={{ pointerEvents: isSubPageActive ? 'none' : 'auto' }}
       >
         <ChatList 
           activeChatId={activeChatId} 
@@ -165,51 +195,58 @@ export default function App() {
         />
       </motion.div>
 
-      {/* Main Content / Chat Window */}
+      {/* Page 2: Chat Window */}
       <motion.div 
-        initial={{ x: '-100%' }}
-        animate={{ x: activeChatId ? '0%' : '-100%' }}
+        initial={{ x: '-100.1%' }}
+        animate={{ 
+          x: isLayer2Active ? '100.1%' : (activeChatId ? '0%' : '-100.1%'),
+          opacity: isLayer2Active ? 0 : (activeChatId ? 1 : 0),
+          scale: isLayer2Active ? 0.95 : 1
+        }}
         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-        drag="x"
+        drag={activeChatId && !isLayer2Active ? "x" : false}
         dragConstraints={{ left: 0, right: 0 }}
         dragElastic={0.2}
         onDragEnd={(e, info) => {
-          // In RTL, swiping to the left (negative x) is "back"
-          if (info.offset.x < -100 || info.velocity.x < -500) {
+          // In RTL, we use x: 100% for left and x: -100% for right.
+          // Chat enters from -100% (right) to 0% (center).
+          // To go back, we swipe it back to the right (positive offset).
+          if (info.offset.x > 100 || info.velocity.x > 500) {
             setActiveChatId(null);
           }
         }}
-        className="absolute inset-0 flex flex-col bg-background z-20 shadow-[0_0_20px_rgba(0,0,0,0.2)]"
+        className="absolute inset-0 flex flex-col bg-background z-20 shadow-xl"
+        style={{ pointerEvents: !activeChatId || isLayer2Active ? 'none' : 'auto' }}
       >
         {activeChatId && (
           <ChatWindow chatId={activeChatId} currentUser={profile} onClose={() => setActiveChatId(null)} />
         )}
       </motion.div>
 
-      {/* Profile Overlay */}
+      {/* Page 3: Profile Overlay */}
       <AnimatePresence>
         {showProfile && profile && (
           <motion.div 
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
+            initial={{ x: '-100.1%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '-100.1%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="absolute inset-0 z-50 bg-background"
+            className="absolute inset-0 z-50 bg-background shadow-2xl"
           >
             <Profile profile={profile} onClose={() => setShowProfile(false)} />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Settings Overlay */}
+      {/* Page 4: Settings Overlay */}
       <AnimatePresence>
         {showSettings && profile && (
           <motion.div 
-            initial={{ x: '100%' }}
+            initial={{ x: '-100.1%' }}
             animate={{ x: 0 }}
-            exit={{ x: '100%' }}
+            exit={{ x: '-100.1%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="absolute inset-0 z-50 bg-background"
+            className="absolute inset-0 z-50 bg-background shadow-2xl"
           >
             <Settings 
               profile={profile} 
