@@ -12,6 +12,34 @@
     <meta name="format-detection" content="telephone=no" />
     <meta name="msapplication-tap-highlight" content="no" />
     <link rel="apple-touch-icon" href="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f6/Flag_of_Iraq.svg/192px-Flag_of_Iraq.svg.png" />
+    <script>
+      window.onerror = function(msg, url, line, col, error) {
+        var div = document.getElementById('error-overlay');
+        if (!div) {
+          div = document.createElement('div');
+          div.id = 'error-overlay';
+          div.style.position = 'fixed';
+          div.style.top = '0';
+          div.style.left = '0';
+          div.style.width = '100%';
+          div.style.height = '100%';
+          div.style.background = 'white';
+          div.style.color = 'black';
+          div.style.padding = '20px';
+          div.style.zIndex = '9999';
+          div.style.overflow = 'auto';
+          div.style.fontFamily = 'sans-serif';
+          document.body.appendChild(div);
+        }
+        div.innerHTML = '<h1 style="color: #ef4444;">حدث خطأ في التشغيل</h1>' +
+                        '<p><b>الرسالة:</b> ' + msg + '</p>' +
+                        '<p><b>الملف:</b> ' + url + '</p>' +
+                        '<p><b>السطر:</b> ' + line + '</p>' +
+                        (error && error.stack ? '<pre style="background: #f4f4f5; padding: 10px; border-radius: 5px; font-size: 12px; white-space: pre-wrap;">' + error.stack + '</pre>' : '') +
+                        '<button onclick="location.reload()" style="padding: 12px 24px; background: #8b5cf6; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 20px;">إعادة المحاولة</button>';
+        return false;
+      };
+    </script>
   </head>
   <body>
     <div id="root"></div>
