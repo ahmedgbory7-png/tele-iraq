@@ -14,16 +14,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Checkbox } from '@/components/ui/checkbox';
 import { motion, AnimatePresence } from 'motion/react';
 
-interface ChatListProps {
-  activeChatId: string | null;
-  onSelectChat: (id: string) => void;
-  onOpenProfile: () => void;
-  onOpenSettings: () => void;
-  currentUser: UserProfile | null;
-  language: Language;
-}
+import { useStore } from '@/store/useStore';
 
-export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSettings, currentUser, language }: ChatListProps) {
+export function ChatList() {
+  const { 
+    activeChatId, 
+    setActiveChatId, 
+    setShowProfile, 
+    setShowSettings, 
+    profile: currentUser, 
+    language,
+    currentTab
+  } = useStore();
+  
   const t = translations[language];
   const [chats, setChats] = useState<Chat[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,11 +49,13 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
     }
 
     const fetchContacts = async () => {
-      // For simplicity, we fetch all users except current user
-      // In a real app, this would be a contacts list
-      const q = query(collection(db, 'users'), limit(50));
-      const snap = await getDocs(q);
-      setContacts(snap.docs.map(d => d.data() as UserProfile).filter(u => u.uid !== currentUser.uid));
+      try {
+        const q = query(collection(db, 'users'), limit(100));
+        const snap = await getDocs(q);
+        setContacts(snap.docs.map(d => d.data() as UserProfile).filter(u => u.uid !== currentUser.uid));
+      } catch (err) {
+        console.error("Error fetching contacts:", err);
+      }
     };
     fetchContacts();
 
@@ -96,25 +101,47 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
 
   const handleSearch = async (val: string) => {
     setSearchQuery(val);
-    if (val.length < 3) {
+    if (!val.trim()) {
       setSearchResults([]);
       setIsSearching(false);
       return;
     }
 
     setIsSearching(true);
-    const q = query(
-      collection(db, 'users'),
-      where('phoneNumber', '>=', val),
-      where('phoneNumber', '<=', val + '\uf8ff'),
-      limit(5)
+    
+    // Local search first in loaded contacts
+    const localResults = contacts.filter(c => 
+      c.displayName?.toLowerCase().includes(val.toLowerCase()) || 
+      c.phoneNumber?.includes(val)
     );
     
-    const snapshot = await getDocs(q);
-    const results = snapshot.docs
-      .map(doc => doc.data() as UserProfile)
-      .filter(u => u.uid !== currentUser?.uid);
-    setSearchResults(results);
+    if (val.length >= 3) {
+      const q = query(
+        collection(db, 'users'),
+        where('phoneNumber', '>=', val),
+        where('phoneNumber', '<=', val + '\uf8ff'),
+        limit(10)
+      );
+      
+      try {
+        const snapshot = await getDocs(q);
+        const remoteResults = snapshot.docs
+          .map(doc => doc.data() as UserProfile)
+          .filter(u => u.uid !== currentUser?.uid);
+        
+        // Merge and deduplicate
+        const merged = [...localResults];
+        remoteResults.forEach(r => {
+          if (!merged.find(m => m.uid === r.uid)) merged.push(r);
+        });
+        setSearchResults(merged);
+      } catch (err) {
+        console.error("Search error:", err);
+        setSearchResults(localResults);
+      }
+    } else {
+      setSearchResults(localResults);
+    }
   };
 
   const startChat = async (targetUser: UserProfile) => {
@@ -122,7 +149,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
 
     const existingChat = (chats || []).find(c => c.participants.includes(targetUser.uid));
     if (existingChat) {
-      onSelectChat(existingChat.id);
+      setActiveChatId(existingChat.id);
       setIsSearching(false);
       setSearchQuery('');
       return;
@@ -139,7 +166,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
     };
 
     const docRef = await addDoc(collection(db, 'chats'), newChat);
-    onSelectChat(docRef.id);
+    setActiveChatId(docRef.id);
     setIsSearching(false);
     setSearchQuery('');
   };
@@ -152,6 +179,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
       updatedAt: serverTimestamp(),
       isGroup: true,
       groupName: groupName.trim(),
+      admins: [currentUser.uid], // Creator is the first admin
       lastMessage: {
         text: `تم إنشاء المجموعة بواسطة ${currentUser.displayName}`,
         senderId: currentUser.uid,
@@ -160,7 +188,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
     };
 
     const docRef = await addDoc(collection(db, 'chats'), newChat);
-    onSelectChat(docRef.id);
+    setActiveChatId(docRef.id);
     setIsCreateGroupOpen(false);
     setGroupName('');
     setSelectedContacts([]);
@@ -170,7 +198,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
     if (!window.confirm('هل أنت متأكد من حذف هذه المحادثة؟')) return;
     try {
       await deleteDoc(doc(db, 'chats', chatId));
-      if (activeChatId === chatId) onSelectChat(null);
+      if (activeChatId === chatId) setActiveChatId(null);
     } catch (err) {
       console.error("Error deleting chat:", err);
     }
@@ -184,7 +212,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
       try {
         await deleteDoc(doc(db, 'chats', chatId));
         if (activeChatId === chatId) {
-          onSelectChat('');
+          setActiveChatId(null);
         }
       } catch (err) {
         console.error("Error deleting chat:", err);
@@ -223,7 +251,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
       });
 
       if (existing) {
-        onSelectChat(existing.id);
+        setActiveChatId(existing.id);
       } else {
         const newChat = {
           participants: [currentUser.uid, systemUser.uid],
@@ -245,7 +273,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
           createdAt: serverTimestamp()
         });
         
-        onSelectChat(docRef.id);
+        setActiveChatId(docRef.id);
       }
       setIsSearching(false);
       setSearchQuery('');
@@ -256,11 +284,59 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
     }
   };
 
+  if (currentTab === 'contacts') {
+    return (
+      <div className="flex flex-col h-full bg-card" dir="rtl">
+        <div className="p-4 border-b flex items-center justify-between">
+          <h2 className="text-xl font-bold">جهات الاتصال</h2>
+          <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setIsSearching(!isSearching)}>
+            <Search className="h-5 w-5" />
+          </Button>
+        </div>
+        
+        {isSearching && (
+          <div className="px-4 py-2 animate-in slide-in-from-top duration-200">
+            <Input
+              autoFocus
+              placeholder="البحث عن اسم أو رقم..."
+              className="bg-muted/50 border-none rounded-xl h-10 focus-visible:ring-primary/30"
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+            />
+          </div>
+        )}
+
+        <ScrollArea className="flex-1">
+          <div className="p-2 space-y-1">
+            {(searchQuery.length > 0 ? searchResults : contacts).map(user => (
+              <div
+                key={user.uid}
+                onClick={() => startChat(user)}
+                className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-accent transition-colors text-right cursor-pointer"
+              >
+                <Avatar className="h-12 w-12">
+                  <AvatarImage src={user.photoURL} />
+                  <AvatarFallback style={{ backgroundColor: user.nameColor || '#8b5cf6' }} className="text-white font-bold">
+                    {user.displayName?.slice(0, 2)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm truncate">{user.displayName}</p>
+                  <p className="text-xs text-muted-foreground">{user.status || user.phoneNumber}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-card" dir="rtl">
       {/* Header */}
       <div className="p-4 flex items-center justify-between border-b">
-        <div className="flex items-center gap-3 cursor-pointer" onClick={onOpenProfile}>
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => setShowProfile(true)}>
           <Avatar className="h-10 w-10 border-2 border-primary/20">
             <AvatarImage src={currentUser?.photoURL} />
             <AvatarFallback className="text-white font-bold" style={{ backgroundColor: currentUser?.nameColor || '#8b5cf6' }}>
@@ -273,43 +349,27 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
           </div>
         </div>
         <div className="flex gap-1">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="rounded-full hover:bg-blue-500/10 hover:text-blue-500" 
-            onClick={startSystemChat}
-            disabled={systemLoading}
-            title="محادثة تجريبية مع النظام"
-          >
-            {systemLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Bot className="h-5 w-5" />}
+          <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setIsSearching(!isSearching)}>
+            <Search className="h-5 w-5" />
           </Button>
-          <Button variant="ghost" size="icon" className="rounded-full hover:bg-primary/10 hover:text-primary" onClick={() => setIsSearching(!isSearching)}>
-            <Edit className="h-5 w-5" />
-          </Button>
-          <Button variant="ghost" size="icon" className="rounded-full hover:bg-primary/10 hover:text-primary" onClick={() => setIsCreateGroupOpen(true)} title="إنشاء مجموعة">
+          <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setIsCreateGroupOpen(true)} title="إنشاء مجموعة">
             <Users className="h-5 w-5" />
-          </Button>
-          <Button variant="ghost" size="icon" className="rounded-full hover:bg-primary/10 hover:text-primary" onClick={onOpenSettings}>
-            <Settings className="h-5 w-5" />
-          </Button>
-          <Button variant="ghost" size="icon" className="rounded-full hover:bg-destructive/10 hover:text-destructive" onClick={() => auth.signOut()}>
-            <LogOut className="h-5 w-5" />
           </Button>
         </div>
       </div>
 
       {/* Search */}
-      <div className="px-4 py-2">
-        <div className="relative">
-          <Search className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
+      {isSearching && (
+        <div className="px-4 py-2 border-b animate-in slide-in-from-top duration-200">
           <Input
+            autoFocus
             placeholder={t.searchPlaceholder}
-            className="pr-9 bg-muted/50 border-none rounded-xl h-10 focus-visible:ring-primary/30"
+            className="bg-muted/50 border-none rounded-xl h-10 focus-visible:ring-primary/30"
             value={searchQuery}
             onChange={(e) => handleSearch(e.target.value)}
           />
         </div>
-      </div>
+      )}
 
       {/* List */}
       <ScrollArea className="flex-1 no-scrollbar">
@@ -327,11 +387,10 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
                   onKeyDown={(e) => e.key === 'Enter' && startChat(user)}
                   className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-accent transition-colors text-right cursor-pointer"
                 >
-                    <Avatar className="h-12 w-12">
+                    <Avatar className="h-12 w-12 border border-border/50">
                       <AvatarImage src={user.photoURL} />
                       <AvatarFallback 
-                        className={`text-white ${user.nameColor === 'magic' ? 'magic-color-bg' : ''}`} 
-                        style={{ backgroundColor: user.nameColor === 'magic' ? undefined : (user.nameColor || '#8b5cf6') }}
+                        className={`text-white font-bold bg-muted-foreground/20 text-muted-foreground`} 
                       >
                         {user.displayName?.slice(0, 2).toUpperCase()}
                       </AvatarFallback>
@@ -339,7 +398,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
                     <div className="flex-1 min-w-0">
                       <p 
                         className={`font-semibold text-sm truncate ${user.nameColor === 'magic' ? 'magic-color-text' : ''}`} 
-                        style={{ color: user.nameColor === 'magic' ? undefined : user.nameColor }}
+                        style={{ color: user.nameColor === 'magic' ? undefined : (user.nameColor || '#141414') }}
                       >
                         {user.displayName}
                       </p>
@@ -379,8 +438,8 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
                     }}
                     role="button"
                     tabIndex={0}
-                    onClick={() => onSelectChat(chat.id)}
-                    onKeyDown={(e) => e.key === 'Enter' && onSelectChat(chat.id)}
+                    onClick={() => setActiveChatId(chat.id)}
+                    onKeyDown={(e) => e.key === 'Enter' && setActiveChatId(chat.id)}
                     className={`relative w-full flex items-center gap-3 p-3 transition-all text-right group cursor-pointer bg-card ${
                       activeChatId === chat.id ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'hover:bg-accent'
                     }`}
@@ -388,8 +447,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
                     <Avatar className="h-12 w-12 border-2 border-white/10">
                       <AvatarImage src={photoURL} />
                       <AvatarFallback 
-                        className={`text-white ${nameColor === 'magic' ? 'magic-color-bg' : ''}`} 
-                        style={{ backgroundColor: nameColor === 'magic' ? undefined : nameColor }}
+                        className={`text-white font-bold bg-muted-foreground/20 text-muted-foreground`} 
                       >
                         {displayName?.slice(0, 2).toUpperCase() || 'CH'}
                       </AvatarFallback>
@@ -398,7 +456,7 @@ export function ChatList({ activeChatId, onSelectChat, onOpenProfile, onOpenSett
                       <div className="flex justify-between items-baseline">
                         <p 
                           className={`font-bold text-sm truncate ${nameColor === 'magic' ? (activeChatId === chat.id ? '' : 'magic-color-text') : ''}`} 
-                          style={{ color: activeChatId === chat.id ? 'white' : (nameColor === 'magic' ? undefined : nameColor) }}
+                          style={{ color: activeChatId === chat.id ? 'white' : (nameColor === 'magic' ? undefined : (nameColor || '#141414')) }}
                         >
                           {displayName}
                         </p>

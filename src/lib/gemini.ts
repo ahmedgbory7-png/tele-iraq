@@ -17,41 +17,25 @@ export async function getSystemBotResponse(userMessage: string, history: { role:
   try {
     const ai = getGenAI();
     
-    // Check if history already contains the latest message to avoid duplication
-    const lastMsgVisible = history.length > 0 ? history[history.length - 1].parts[0].text : '';
-    const cleanHistory = lastMsgVisible === userMessage ? history.slice(0, -1) : history;
-
-    let response;
-    try {
-      response = await (ai as any).models.generateContent({
-        model: "gemini-flash-latest",
-        contents: [
-          ...cleanHistory,
-          { role: 'user', parts: [{ text: userMessage }] }
-        ],
-        config: {
-          systemInstruction: "أنت المساعد الذكي لتطبيق 'تليعراق' (TeleIraq). تطبيق مراسلة عراقي متطور. أجب بلهجة عراقية محببة وودودة. ساعد المستخدم في فهم ميزات التطبيق أو دردش معه بذكاء. حافظ على الردود قصيرة ومناسبة للدردشة.",
-        },
-      });
-    } catch (innerError: any) {
-      console.warn("Retrying with fallback model...");
-      response = await (ai as any).models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          ...cleanHistory,
-          { role: 'user', parts: [{ text: userMessage }] }
-        ],
-        config: {
-          systemInstruction: "أنت مساعد ذكي. أجب بباللهجة العراقية.",
-        },
-      });
-    }
+    // Convert history format to the one expected by generateContent if needed
+    // The history should be in the format [{role: 'user', parts: [{text: '...'}]}, ...]
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [
+        ...history,
+        { role: 'user', parts: [{ text: userMessage }] }
+      ],
+      config: {
+        systemInstruction: "أنت المساعد الذكي لتطبيق 'تليعراق' (TeleIraq). تطبيق مراسلة عراقي متطور. أجب بلهجة عراقية محببة وودودة. ساعد المستخدم في فهم ميزات التطبيق أو دردش معه بذكاء. حافظ على الردود قصيرة ومناسبة للدردشة.",
+        temperature: 0.7,
+        topP: 0.95,
+      },
+    });
     
     return response.text;
   } catch (error: any) {
     console.error("Gemini Error:", error);
-    // Log the full error for debugging if possible
-    if (error.stack) console.log(error.stack);
     return "عذراً، واجهت مشكلة في التفكير حالياً. حاول مرة أخرى لاحقاً! 🇮🇶";
   }
 }

@@ -1,25 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/firebase';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { Message, UserProfile, Chat } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Phone, Video, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, Volume2, VolumeX, VideoOff, Camera } from 'lucide-react';
+import { Send, Phone, Video, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, Volume2, VolumeX, VideoOff, Camera, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { getSystemBotResponse } from '@/lib/gemini';
 import { DominoGame } from './DominoGame';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
-interface ChatWindowProps {
-  chatId: string;
-  currentUser: UserProfile | null;
-  onClose: () => void;
-}
+import { useStore } from '@/store/useStore';
 
-export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
+export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () => void }) {
+  const { profile: currentUser } = useStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [chatData, setChatData] = useState<Chat | null>(null);
@@ -36,6 +34,9 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
   const [isLocating, setIsLocating] = useState(false);
   const [activeGameId, setActiveGameId] = useState<string | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showGroupSettings, setShowGroupSettings] = useState(false);
+  
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
@@ -52,34 +53,26 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
   }, []);
 
   useEffect(() => {
-    const fetchChatData = async () => {
-      const chatDoc = await getDoc(doc(db, 'chats', chatId));
-      if (chatDoc.exists()) {
-        const data = chatDoc.data() as Chat;
-        setChatData(data);
-        
-        if (!data.isGroup) {
-          const otherId = data.participants.find((p: string) => p !== currentUser?.uid);
-          if (otherId) {
-            const userDoc = await getDoc(doc(db, 'users', otherId));
-            if (userDoc.exists()) {
-              setOtherProfile(userDoc.data() as UserProfile);
-            }
+    const fetchProfiles = async (data: Chat) => {
+      if (!data.isGroup) {
+        const otherId = data.participants.find((p: string) => p !== currentUser?.uid);
+        if (otherId) {
+          const userDoc = await getDoc(doc(db, 'users', otherId));
+          if (userDoc.exists()) {
+            setOtherProfile(userDoc.data() as UserProfile);
           }
-        } else {
-          // Fetch all participants for group
-          const participantProfiles: Record<string, UserProfile> = {};
-          for (const pid of data.participants) {
-            const pDoc = await getDoc(doc(db, 'users', pid));
-            if (pDoc.exists()) {
-              participantProfiles[pid] = pDoc.data() as UserProfile;
-            }
-          }
-          setParticipants(participantProfiles);
         }
+      } else {
+        const participantProfiles: Record<string, UserProfile> = {};
+        for (const pid of data.participants) {
+          const pDoc = await getDoc(doc(db, 'users', pid));
+          if (pDoc.exists()) {
+            participantProfiles[pid] = pDoc.data() as UserProfile;
+          }
+        }
+        setParticipants(participantProfiles);
       }
     };
-    fetchChatData();
 
     const q = query(
       collection(db, 'chats', chatId, 'messages'),
@@ -90,7 +83,6 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
       const msgData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
       setMessages(msgData);
       
-      // Mark messages as read
       msgData.forEach(async (msg) => {
         if (!msg.read && msg.senderId !== currentUser?.uid) {
           try {
@@ -110,13 +102,27 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
       console.error("Snapshot error:", error);
     });
 
-    // Listen for typing indicators
+    // Listen for chat updates (typing, calls, etc)
     const chatUnsubscribe = onSnapshot(doc(db, 'chats', chatId), (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data() as Chat;
+        setChatData(data);
+        
+        // Fetch profiles if they haven't been loaded yet
+        if (!otherProfile && !data.isGroup) fetchProfiles(data);
+        if (Object.keys(participants).length === 0 && data.isGroup) fetchProfiles(data);
+
         const typing = data.typing || {};
         const typingIds = Object.keys(typing).filter(uid => typing[uid] && uid !== currentUser?.uid);
         setTypingUsers(typingIds);
+
+        // Handle Call signaling
+        if (data.call && data.call.status !== 'ended') {
+          setCallType(data.call.type);
+          setIsCalling(true);
+        } else if (data.call?.status === 'ended' || !data.call) {
+          setIsCalling(false);
+        }
       }
     });
 
@@ -124,7 +130,7 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
       unsubscribe();
       chatUnsubscribe();
     };
-  }, [chatId, currentUser]);
+  }, [chatId, currentUser, otherProfile, participants]);
 
   const updateTypingStatus = async (isTyping: boolean) => {
     if (!currentUser) return;
@@ -154,7 +160,19 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!newMessage.trim() || !currentUser) return;
+    if (!newMessage.trim() || !currentUser || !chatData) return;
+
+    // Check Blocking
+    if (!chatData.isGroup) {
+      if (currentUser.blockedUsers?.includes(otherProfile?.uid || '')) {
+        alert('لقد قمت بحظر هذا المستخدم. قم بإلغاء الحظر لتتمكن من المراسلة.');
+        return;
+      }
+      if (otherProfile?.blockedUsers?.includes(currentUser.uid)) {
+        alert('لا يمكنك إرسال رسائل لهذا المستخدم حالياً.');
+        return;
+      }
+    }
 
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
@@ -414,11 +432,141 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
     }
   };
 
-  const startCall = (type: 'voice' | 'video') => {
+  const startCall = async (type: 'voice' | 'video') => {
+    if (!currentUser) return;
     setCallType(type);
     setVideoOn(type === 'video');
     setIsCalling(true);
+    
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        call: {
+          type,
+          callerId: currentUser.uid,
+          status: 'ringing',
+          startedAt: serverTimestamp()
+        }
+      });
+    } catch (err) {
+      console.error("Error starting call:", err);
+    }
   };
+
+  const handleEndCall = async () => {
+    setIsCalling(false);
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        'call.status': 'ended',
+        'call.endedAt': serverTimestamp()
+      });
+    } catch (err) {
+      console.error("Error ending call:", err);
+    }
+  };
+
+  const handleAnswerCall = async () => {
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        'call.status': 'active'
+      });
+    } catch (err) {
+      console.error("Error answering call:", err);
+    }
+  };
+
+  const toggleBlockUser = async () => {
+    if (!currentUser || !otherProfile) return;
+    const isCurrentlyBlocked = currentUser.blockedUsers?.includes(otherProfile.uid);
+    try {
+      await updateDoc(doc(db, 'users', currentUser.uid), {
+        blockedUsers: isCurrentlyBlocked ? arrayRemove(otherProfile.uid) : arrayUnion(otherProfile.uid)
+      });
+      setShowMoreMenu(false);
+    } catch (err) {
+      console.error("Error toggling block:", err);
+    }
+  };
+
+  const leaveGroup = async () => {
+    if (!currentUser || !chatData || !chatData.isGroup) return;
+    if (!window.confirm('هل أنت متأكد من مغادرة المجموعة؟')) return;
+    
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        participants: arrayRemove(currentUser.uid),
+        admins: arrayRemove(currentUser.uid)
+      });
+      onClose();
+    } catch (err) {
+      console.error("Error leaving group:", err);
+    }
+  };
+
+  const deleteGroup = async () => {
+    if (!currentUser || !chatData || !chatData.isGroup) return;
+    const isAdmin = chatData.admins?.includes(currentUser.uid);
+    if (!isAdmin) {
+      alert('فقط المشرفين يمكنهم حذف المجموعة.');
+      return;
+    }
+
+    if (!window.confirm('هل أنت متأكد من حذف المجموعة بالكامل؟ لا يمكن التراجع عن هذا الإجراء.')) return;
+    
+    try {
+      await deleteDoc(doc(db, 'chats', chatId));
+      onClose();
+    } catch (err) {
+      console.error("Error deleting group:", err);
+    }
+  };
+
+  const addAdmin = async (targetUid: string) => {
+    if (!currentUser || !chatData || !chatData.isGroup) return;
+    const isMeAdminEnabled = chatData.admins?.includes(currentUser.uid);
+    if (!isMeAdminEnabled) return;
+
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        admins: arrayUnion(targetUid)
+      });
+    } catch (err) {
+      console.error("Error adding admin:", err);
+    }
+  };
+
+  const removeAdmin = async (targetUid: string) => {
+    if (!currentUser || !chatData || !chatData.isGroup) return;
+    const isMeAdminEnabled = chatData.admins?.includes(currentUser.uid);
+    if (!isMeAdminEnabled) return;
+
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        admins: arrayRemove(targetUid)
+      });
+    } catch (err) {
+      console.error("Error removing admin:", err);
+    }
+  };
+
+  const removeMember = async (targetUid: string) => {
+    if (!currentUser || !chatData || !chatData.isGroup) return;
+    const isMeAdminEnabled = chatData.admins?.includes(currentUser.uid);
+    if (!isMeAdminEnabled) return;
+
+    if (!window.confirm('هل أنت متأكد من إزالة هذا العضو من المجموعة؟')) return;
+
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        participants: arrayRemove(targetUid),
+        admins: arrayRemove(targetUid)
+      });
+    } catch (err) {
+      console.error("Error removing member:", err);
+    }
+  };
+
+  const isMeAdmin = chatData?.isGroup && chatData.admins?.includes(currentUser?.uid || '');
+  const iBlockedOther = !chatData?.isGroup && currentUser?.blockedUsers?.includes(otherProfile?.uid || '');
 
   return (
     <div className="flex flex-col h-full telegram-bg relative" dir="rtl">
@@ -431,8 +579,7 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
           <Avatar className="h-10 w-10 border-2 border-primary/10">
             <AvatarImage src={chatData?.isGroup ? chatData.groupPhoto : otherProfile?.photoURL} />
             <AvatarFallback 
-              className={`text-white font-bold ${(!chatData?.isGroup && otherProfile?.nameColor === 'magic') ? 'magic-color-bg' : ''}`} 
-              style={{ backgroundColor: (chatData?.isGroup ? '#8b5cf6' : (otherProfile?.nameColor === 'magic' ? undefined : otherProfile?.nameColor)) || '#8b5cf6' }}
+              className="text-white font-bold bg-muted-foreground/20 text-muted-foreground"
             >
               {(chatData?.isGroup ? chatData.groupName : otherProfile?.displayName)?.slice(0, 2).toUpperCase() || 'CH'}
             </AvatarFallback>
@@ -440,7 +587,7 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
           <div className="flex flex-col">
             <span 
               className={`font-bold text-sm ${(!chatData?.isGroup && otherProfile?.nameColor === 'magic') ? 'magic-color-text' : ''}`} 
-              style={{ color: (chatData?.isGroup ? '#8b5cf6' : (otherProfile?.nameColor === 'magic' ? undefined : otherProfile?.nameColor)) }}
+              style={{ color: (chatData?.isGroup ? '#8b5cf6' : (otherProfile?.nameColor === 'magic' ? undefined : (otherProfile?.nameColor || '#141414'))) }}
             >
               {chatData?.isGroup ? chatData.groupName : (otherProfile?.displayName || 'مستخدم تليعراق')}
             </span>
@@ -449,8 +596,70 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          {!chatData?.isGroup && (
+          <div className="flex items-center gap-1 relative">
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="rounded-full text-muted-foreground hover:text-primary"
+              onClick={() => setShowMoreMenu(!showMoreMenu)}
+            >
+              <MoreVertical className="h-5 w-5" />
+            </Button>
+
+            <AnimatePresence>
+              {showMoreMenu && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                  className="absolute left-0 top-12 w-48 bg-card border shadow-2xl rounded-2xl p-2 z-[100] flex flex-col gap-1"
+                >
+                  {chatData?.isGroup ? (
+                    <>
+                      <Button 
+                        variant="ghost" 
+                        className="w-full justify-start text-xs rounded-xl h-10 gap-2"
+                        onClick={() => { setShowGroupSettings(true); setShowMoreMenu(false); }}
+                      >
+                        <ShieldCheck className="w-4 h-4 text-primary" />
+                        إدارة المجموعة
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        className="w-full justify-start text-xs text-destructive rounded-xl h-10 gap-2 hover:bg-destructive/10"
+                        onClick={leaveGroup}
+                      >
+                        <LogOut className="w-4 h-4" />
+                        مغادرة المجموعة
+                      </Button>
+                      {isMeAdmin && (
+                        <Button 
+                          variant="ghost" 
+                          className="w-full justify-start text-xs text-destructive rounded-xl h-10 gap-2 hover:bg-destructive/10 font-bold"
+                          onClick={deleteGroup}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          حذف المجموعة نهائياً
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <Button 
+                        variant="ghost" 
+                        className={`w-full justify-start text-xs rounded-xl h-10 gap-2 ${iBlockedOther ? 'text-green-500' : 'text-destructive'}`}
+                        onClick={toggleBlockUser}
+                      >
+                        <ShieldAlert className="w-4 h-4" />
+                        {iBlockedOther ? 'إلغاء الحظر' : 'حظر المستخدم'}
+                      </Button>
+                    </>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {!chatData?.isGroup && (
             <Button 
               variant="ghost" 
               size="icon" 
@@ -497,25 +706,15 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
                   initial={{ opacity: 0, y: 10, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  drag="x"
-                  dragConstraints={{ left: 0, right: 0 }}
-                  dragElastic={0.1}
-                  onDragEnd={(e, info) => {
-                    if (info.offset.x < -50) {
-                      // Visual feedback for reply gesture
-                      console.log("Reply gesture detected");
-                    }
-                  }}
-                  className={`flex ${isMe ? 'justify-start' : 'justify-end'} items-end gap-2 mb-1`}
+                  className={`flex ${isMe ? 'justify-start' : 'justify-end'} items-end gap-2 mb-1 touch-pan-y`}
                 >
                   {!isMe && (
                     <div className="w-8 shrink-0">
                       {showAvatar && (
-                        <Avatar className="h-8 w-8">
+                        <Avatar className="h-8 w-8 border border-border/50">
                           <AvatarImage src={senderProfile?.photoURL} />
                           <AvatarFallback 
-                            className={`text-white text-[10px] ${senderProfile?.nameColor === 'magic' ? 'magic-color-bg' : ''}`} 
-                            style={{ backgroundColor: senderProfile?.nameColor === 'magic' ? undefined : (senderProfile?.nameColor || '#8b5cf6') }}
+                            className="text-white text-[10px] font-bold bg-muted-foreground/20 text-muted-foreground"
                           >
                             {senderProfile?.displayName?.slice(0, 2).toUpperCase() || '??'}
                           </AvatarFallback>
@@ -541,7 +740,7 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
                       {chatData?.isGroup && !isMe && showAvatar && (
                         <p 
                           className={`text-[10px] font-bold mb-0.5 ${senderProfile?.nameColor === 'magic' ? 'magic-color-text' : ''}`} 
-                          style={{ color: senderProfile?.nameColor === 'magic' ? undefined : senderProfile?.nameColor }}
+                          style={{ color: senderProfile?.nameColor === 'magic' ? undefined : (senderProfile?.nameColor || '#8b5cf6') }}
                         >
                           {senderProfile?.displayName}
                         </p>
@@ -847,57 +1046,89 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
                   {otherProfile?.displayName}
                 </h3>
                 <p className="text-primary/80 animate-pulse font-medium">
-                  {callType === 'video' ? 'مكالمة فيديو جارية...' : 'مكالمة صوتية جارية...'}
+                  {chatData?.call?.status === 'ringing' 
+                    ? (chatData.call.callerId === currentUser?.uid ? 'جاري الاتصال...' : 'مكالمة واردة...') 
+                    : (callType === 'video' ? 'مكالمة فيديو جارية' : 'مكالمة صوتية جارية')}
                 </p>
-                <div className="mt-4 flex items-center justify-center gap-2 text-xs text-white/40">
-                  <span className="w-2 h-2 rounded-full bg-green-500 animate-ping"></span>
-                  متصل الآن
-                </div>
+                {chatData?.call?.status === 'active' && (
+                  <div className="mt-4 flex items-center justify-center gap-2 text-xs text-white/40">
+                    <span className="w-2 h-2 rounded-full bg-green-500 animate-ping"></span>
+                    متصل الآن
+                  </div>
+                )}
               </div>
               
-              <div className="grid grid-cols-3 gap-6 mt-auto mb-12 w-full max-w-sm">
-                <div className="flex flex-col items-center gap-2">
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className={`w-14 h-14 rounded-full transition-all ${speakerOn ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white'}`}
-                    onClick={() => setSpeakerOn(!speakerOn)}
-                  >
-                    {speakerOn ? <Volume2 className="w-6 h-6" /> : <VolumeX className="w-6 h-6" />}
-                  </Button>
-                  <span className="text-[10px] opacity-60">مكبر الصوت</span>
-                </div>
+              <div className="flex justify-center gap-8 mt-auto mb-12 w-full max-w-sm px-6">
+                {chatData?.call?.status === 'ringing' && chatData.call.callerId !== currentUser?.uid ? (
+                  <>
+                    <div className="flex flex-col items-center gap-2">
+                      <Button 
+                        size="icon" 
+                        className="w-16 h-16 rounded-full bg-green-500 hover:bg-green-600 shadow-2xl shadow-green-500/40 animate-bounce" 
+                        onClick={handleAnswerCall}
+                      >
+                        <Phone className="w-8 h-8" />
+                      </Button>
+                      <span className="text-xs font-bold text-green-400">رد</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-2">
+                      <Button 
+                        variant="destructive" 
+                        size="icon" 
+                        className="w-16 h-16 rounded-full shadow-2xl shadow-red-500/40" 
+                        onClick={handleEndCall}
+                      >
+                        <Phone className="w-8 h-8 rotate-[135deg]" />
+                      </Button>
+                      <span className="text-xs font-bold text-red-400">رفض</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-col items-center gap-2">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className={`w-14 h-14 rounded-full transition-all ${speakerOn ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white'}`}
+                        onClick={() => setSpeakerOn(!speakerOn)}
+                      >
+                        {speakerOn ? <Volume2 className="w-6 h-6" /> : <VolumeX className="w-6 h-6" />}
+                      </Button>
+                      <span className="text-[10px] opacity-60">مكبر الصوت</span>
+                    </div>
 
-                <div className="flex flex-col items-center gap-2">
-                  <Button 
-                    variant="destructive" 
-                    size="icon" 
-                    className="w-16 h-16 rounded-full shadow-2xl shadow-red-500/40 hover:scale-105 active:scale-95" 
-                    onClick={() => setIsCalling(false)}
-                  >
-                    <Phone className="w-8 h-8 rotate-[135deg]" />
-                  </Button>
-                  <span className="text-[10px] opacity-80 text-red-400 font-bold">إنهاء</span>
-                </div>
+                    <div className="flex flex-col items-center gap-2">
+                      <Button 
+                        variant="destructive" 
+                        size="icon" 
+                        className="w-16 h-16 rounded-full shadow-2xl shadow-red-500/40 hover:scale-105 active:scale-95" 
+                        onClick={handleEndCall}
+                      >
+                        <Phone className="w-8 h-8 rotate-[135deg]" />
+                      </Button>
+                      <span className="text-[10px] opacity-80 text-red-400 font-bold">إنهاء</span>
+                    </div>
 
-                <div className="flex flex-col items-center gap-2">
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className={`w-14 h-14 rounded-full transition-all ${callType === 'video' && videoOn ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white'}`}
-                    onClick={() => {
-                      if (callType === 'voice') {
-                        setCallType('video');
-                        setVideoOn(true);
-                      } else {
-                        setVideoOn(!videoOn);
-                      }
-                    }}
-                  >
-                    {videoOn && callType === 'video' ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
-                  </Button>
-                  <span className="text-[10px] opacity-60">{callType === 'video' ? 'الكاميرا' : 'فيديو'}</span>
-                </div>
+                    <div className="flex flex-col items-center gap-2">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className={`w-14 h-14 rounded-full transition-all ${callType === 'video' && videoOn ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white'}`}
+                        onClick={() => {
+                          if (callType === 'voice') {
+                            setCallType('video');
+                            setVideoOn(true);
+                          } else {
+                            setVideoOn(!videoOn);
+                          }
+                        }}
+                      >
+                        {videoOn && callType === 'video' ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
+                      </Button>
+                      <span className="text-[10px] opacity-60">{callType === 'video' ? 'الكاميرا' : 'فيديو'}</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </motion.div>
@@ -922,6 +1153,98 @@ export function ChatWindow({ chatId, currentUser, onClose }: ChatWindowProps) {
           </motion.div>
         )}
       </AnimatePresence>
+      {/* Group Settings Dialog */}
+      <Dialog open={showGroupSettings} onOpenChange={setShowGroupSettings}>
+        <DialogContent className="max-w-sm rounded-2xl p-0 overflow-hidden border-none" dir="rtl">
+          <DialogHeader className="p-4 bg-primary text-white">
+            <DialogTitle className="text-right flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5" />
+              إدارة المجموعة
+            </DialogTitle>
+          </DialogHeader>
+          <div className="p-4 space-y-4">
+            <div>
+              <h4 className="text-xs font-bold text-muted-foreground mb-3 px-1 uppercase tracking-wider">الأعضاء ({chatData?.participants.length})</h4>
+              <ScrollArea className="h-64 pr-2">
+                <div className="space-y-2">
+                  {chatData?.participants.map(uid => {
+                    const p = participants[uid];
+                    const isAdmin = chatData.admins?.includes(uid);
+                    const isMe = uid === currentUser?.uid;
+                    
+                    return (
+                      <div key={uid} className="flex items-center justify-between p-2 rounded-xl hover:bg-muted/50 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="h-8 w-8">
+                            <AvatarImage src={p?.photoURL} />
+                            <AvatarFallback style={{ backgroundColor: p?.nameColor || '#8b5cf6' }} className="text-white text-[10px]">
+                              {p?.displayName?.slice(0, 2)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-bold flex items-center gap-1">
+                              {p?.displayName || 'مستخدم'}
+                              {isMe && <span className="text-[10px] text-muted-foreground">(أنت)</span>}
+                              {isAdmin && <ShieldCheck className="w-3 h-3 text-primary" />}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">{isAdmin ? 'مشرف' : 'عضو'}</span>
+                          </div>
+                        </div>
+                        
+                        {isMeAdmin && !isMe && (
+                          <div className="flex gap-1">
+                            {isAdmin ? (
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-8 text-[10px] gap-1 text-amber-600 hover:bg-amber-600/10"
+                                onClick={() => removeAdmin(uid)}
+                              >
+                                <UserMinus className="w-3 h-3" />
+                                تنزيل رتبة
+                              </Button>
+                            ) : (
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-8 text-[10px] gap-1 text-primary hover:bg-primary/10"
+                                onClick={() => addAdmin(uid)}
+                              >
+                                <UserPlus className="w-3 h-3" />
+                                تعيين مشرف
+                              </Button>
+                            )}
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-8 text-[10px] gap-1 text-destructive hover:bg-destructive/10"
+                              onClick={() => removeMember(uid)}
+                            >
+                              <X className="w-3 h-3" />
+                              طرد
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            </div>
+            
+            <div className="pt-2 border-t flex flex-col gap-2">
+              <Button 
+                variant="outline" 
+                className="w-full justify-start text-xs rounded-xl h-10 gap-2 text-destructive hover:bg-destructive/10 border-destructive/20"
+                onClick={() => { leaveGroup(); setShowGroupSettings(false); }}
+              >
+                <LogOut className="w-4 h-4" />
+                مغادرة هذه المجموعة
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

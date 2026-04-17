@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { auth } from '@/firebase';
-import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
+import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -105,6 +105,8 @@ export function Auth() {
         setError('رقم الهاتف غير صحيح. تأكد من كتابته بشكل سليم.');
       } else if (err.code === 'auth/too-many-requests') {
         setError('تم إرسال الكثير من الطلبات لهذا الرقم. يرجى المحاولة لاحقاً.');
+      } else if (err.code === 'auth/billing-not-enabled') {
+        setError('يجب تفعيل الدفع (Billing) في Firebase لإرسال رسائل SMS. يرجى الترقية إلى خطة Blaze أو استخدام أرقام تجريبية.');
       } else {
         setError(err.message || 'فشل إرسال الرمز. حاول مرة أخرى.');
       }
@@ -122,6 +124,24 @@ export function Auth() {
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'رمز التحقق غير صحيح');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      console.error('Google sign in error:', err);
+      if (err.code === 'auth/popup-blocked') {
+        setError('تم حظر النافذة المنبثقة. يرجily السماح بالمنبثقات لهذا الموقع.');
+      } else {
+        setError(err.message || 'فشل تسجيل الدخول عبر جوجل');
+      }
     } finally {
       setLoading(false);
     }
@@ -196,6 +216,36 @@ export function Auth() {
                 {loading ? <Loader2 className="animate-spin ml-2" /> : null}
                 إرسال الرمز
               </Button>
+
+              {!confirmationResult && (
+                <>
+                  <div className="relative py-2">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-border" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-card px-2 text-muted-foreground">أو</span>
+                    </div>
+                  </div>
+
+                  <Button 
+                    variant="outline" 
+                    onClick={handleGoogleSignIn} 
+                    className="w-full h-12 text-base font-medium border-primary/20 hover:bg-primary/5 rounded-xl gap-2 transition-all mt-2"
+                    disabled={loading}
+                  >
+                    <div className="w-5 h-5 flex items-center justify-center">
+                      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-full h-full" referrerPolicy="no-referrer" />
+                    </div>
+                    تسجيل الدخول عبر جوجل
+                  </Button>
+                  
+                  <div className="text-[10px] text-center text-muted-foreground bg-primary/5 p-2 rounded-lg border border-primary/10 mt-4 leading-relaxed">
+                    <p className="font-bold mb-1">تلميح للمطور:</p>
+                    <p>إذا واجهت خطأ "Billing not enabled"، يرجى إضافة "أرقام هواتف للاختبار" في لوحة تحكم Firebase (Settings -{'>'} Phone numbers for testing) لتجربة الرمز مجاناً.</p>
+                  </div>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-4">

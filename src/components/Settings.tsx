@@ -25,6 +25,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { doc, updateDoc } from 'firebase/firestore';
 import { Language, translations } from '@/lib/i18n';
+import { useStore } from '@/store/useStore';
 import {
   Dialog,
   DialogContent,
@@ -34,17 +35,24 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-interface SettingsProps {
-  profile: UserProfile;
-  onClose: () => void;
-  onOpenProfile: () => void;
-  language: Language;
-  onLanguageChange: (lang: Language) => void;
-}
-
 type SettingsView = 'main' | 'privacy' | 'chats' | 'security' | 'notifications' | 'language' | 'data';
 
-export function Settings({ profile, onClose, onOpenProfile, language, onLanguageChange }: SettingsProps) {
+export function Settings() {
+  const { 
+    profile, 
+    setShowSettings, 
+    setShowProfile, 
+    language, 
+    setLanguage: onLanguageChange 
+  } = useStore();
+
+  if (!profile) return null;
+
+  const onClose = () => setShowSettings(false);
+  const onOpenProfile = () => {
+    setShowSettings(false);
+    setShowProfile(true);
+  };
   const t = translations[language];
   const [view, setView] = useState<SettingsView>('main');
   const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));

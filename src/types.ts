@@ -11,6 +11,8 @@ export interface UserProfile {
     lastSeen?: string;
     photo?: string;
   };
+  reels?: { id: string; url: string; createdAt: any; caption?: string }[];
+  blockedUsers?: string[]; // Array of UIDs this user has blocked
 }
 
 export interface Chat {
@@ -25,7 +27,14 @@ export interface Chat {
   isGroup?: boolean;
   groupName?: string;
   groupPhoto?: string;
+  admins?: string[]; // Array of UIDs who are admins
   typing?: { [userId: string]: boolean };
+  call?: {
+    type: 'voice' | 'video';
+    callerId: string;
+    status: 'ringing' | 'active' | 'ended';
+    startedAt: any;
+  };
 }
 
 export interface Message {
