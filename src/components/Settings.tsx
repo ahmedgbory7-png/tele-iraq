@@ -20,12 +20,16 @@ import {
   Check,
   Moon,
   Sun,
-  Type
+  Type,
+  Image as ImageIcon,
+  Plus,
+  Volume2
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { doc, updateDoc } from 'firebase/firestore';
 import { Language, translations } from '@/lib/i18n';
 import { useStore } from '@/store/useStore';
+import { NOTIFICATION_SOUNDS, CHAT_BACKGROUND_PATTERNS } from '@/constants';
 import {
   Dialog,
   DialogContent,
@@ -34,6 +38,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { motion } from 'motion/react';
 
 type SettingsView = 'main' | 'privacy' | 'chats' | 'security' | 'notifications' | 'language' | 'data';
 
@@ -43,12 +48,16 @@ export function Settings() {
     setShowSettings, 
     setShowProfile, 
     language, 
-    setLanguage: onLanguageChange 
+    setLanguage: onLanguageChange,
+    setCurrentTab
   } = useStore();
 
   if (!profile) return null;
 
-  const onClose = () => setShowSettings(false);
+  const onClose = () => {
+    setShowSettings(false);
+    setCurrentTab('chats');
+  };
   const onOpenProfile = () => {
     setShowSettings(false);
     setShowProfile(true);
@@ -58,8 +67,9 @@ export function Settings() {
   const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
   const [fontSize, setFontSize] = useState(() => localStorage.getItem('app-font-size') || '16px');
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
-  const [notifications, setNotifications] = useState(() => JSON.parse(localStorage.getItem('app-notifications') || '{"private":true,"groups":true,"calls":true}'));
+  const [notifications, setNotifications] = useState(() => JSON.parse(localStorage.getItem('app-notifications') || '{"private":true,"groups":true,"calls":true,"privateSound":"default","groupSound":"default"}'));
   const [dataUsage, setDataUsage] = useState(() => JSON.parse(localStorage.getItem('app-data-usage') || '{"autoDownload":true,"lowDataMode":false}'));
+  const [isTerminating, setIsTerminating] = useState(false);
   
   const [privacySettings, setPrivacySettings] = useState({
     phoneNumber: profile.privacy?.phoneNumber || t.everyone,
@@ -100,28 +110,88 @@ export function Settings() {
     localStorage.setItem('app-notifications', JSON.stringify(newNotifs));
   };
 
+  const updateNotificationSound = (type: 'private' | 'group', soundId: string) => {
+    const key = type === 'private' ? 'privateSound' : 'groupSound';
+    const newNotifs = { ...notifications, [key]: soundId };
+    setNotifications(newNotifs);
+    localStorage.setItem('app-notifications', JSON.stringify(newNotifs));
+    
+    // Play preview
+    const sound = NOTIFICATION_SOUNDS.find(s => s.id === soundId);
+    if (sound) {
+      const audio = new Audio(sound.url);
+      audio.play().catch(e => console.log("Audio play blocked", e));
+    }
+  };
+
   const toggleDataUsage = (key: string) => {
     const newData = { ...dataUsage, [key]: !dataUsage[key] };
     setDataUsage(newData);
     localStorage.setItem('app-data-usage', JSON.stringify(newData));
   };
 
+  const updateChatBackground = async (url: string) => {
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), {
+        chatBackground: url
+      });
+    } catch (err) {
+      console.error("Error updating chat background:", err);
+    }
+  };
+
+  const handleTerminateSessions = async () => {
+    if (!profile) return;
+    if (!window.confirm('هل تريد فعلاً إنهاء جميع الجلسات الأخرى؟ سيتم تسجيل الخروج من كل الأجهزة ما عدا هذا الجهاز.')) return;
+
+    setIsTerminating(true);
+    try {
+      const newVersion = Date.now();
+      // 1. Update Firestore
+      await updateDoc(doc(db, 'users', profile.uid), {
+        sessionVersion: newVersion
+      });
+      // 2. Update LocalStorage so THIS device stays logged in
+      localStorage.setItem(`session_${profile.uid}`, newVersion.toString());
+      
+      alert('تم إنهاء جميع الجلسات الأخرى بنجاح.');
+      setView('main');
+    } catch (err) {
+      console.error("Error terminating sessions:", err);
+      alert('حدث خطأ أثناء محاولة إنهاء الجلسات.');
+    } finally {
+      setIsTerminating(false);
+    }
+  };
+
+  const handleBackgroundUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        updateChatBackground(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const renderMain = () => (
-    <div className="flex flex-col h-full">
-      <div className="p-4 flex items-center gap-4 border-b bg-card">
-        <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full">
+    <div className="flex flex-col h-full bg-background" dir="rtl">
+      <div className="glass-header p-4 flex items-center gap-4 safe-top shadow-sm">
+        <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full ios-touch">
           <ArrowRight className={language === 'English' ? 'rotate-180' : ''} />
         </Button>
         <h2 className="text-xl font-bold">{t.settings}</h2>
       </div>
 
-      <ScrollArea className="flex-1">
+      <div className="flex-1 overflow-y-auto no-scrollbar overscroll-contain">
         <div className="p-4 space-y-6">
-          <div 
-            className="flex items-center gap-4 p-4 rounded-2xl bg-primary/5 hover:bg-primary/10 transition-colors cursor-pointer"
+          <motion.div 
+            whileTap={{ scale: 0.98 }}
+            className="flex items-center gap-4 p-4 rounded-3xl bg-primary/5 hover:bg-primary/10 transition-colors cursor-pointer ios-touch shadow-inner"
             onClick={onOpenProfile}
           >
-            <Avatar className="h-16 w-16 border-2 border-primary/20">
+            <Avatar className="h-16 w-16 border-2 border-primary/20 shadow-md">
               <AvatarImage src={profile.photoURL} />
               <AvatarFallback className="text-xl text-white font-bold" style={{ backgroundColor: profile.nameColor }}>
                 {profile.displayName?.slice(0, 2).toUpperCase()}
@@ -132,7 +202,7 @@ export function Settings() {
               <p className="text-sm text-muted-foreground">{profile.phoneNumber}</p>
             </div>
             <User className="text-primary h-5 w-5" />
-          </div>
+          </motion.div>
 
           <div className="space-y-1">
             <SettingsItem 
@@ -184,7 +254,7 @@ export function Settings() {
             <p className="text-[10px] text-muted-foreground/60 mt-1">صنع بكل حب في العراق 🇮🇶</p>
           </div>
         </div>
-      </ScrollArea>
+      </div>
 
       <Dialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
         <DialogContent>
@@ -247,8 +317,13 @@ export function Settings() {
             </div>
           </div>
         </div>
-        <Button variant="outline" className="w-full rounded-xl h-12 text-destructive border-destructive/20 hover:bg-destructive/10">
-          {t.terminateSessions}
+        <Button 
+          variant="outline" 
+          className="w-full rounded-xl h-12 text-destructive border-destructive/20 hover:bg-destructive/10"
+          onClick={handleTerminateSessions}
+          disabled={isTerminating}
+        >
+          {isTerminating ? 'جاري الإنهاء...' : t.terminateSessions}
         </Button>
       </div>
     </SubSettingsView>
@@ -273,34 +348,107 @@ export function Settings() {
 
   const renderNotifications = () => (
     <SubSettingsView title={t.notifications} onBack={() => setView('main')} language={language}>
-      <div className="bg-card rounded-2xl border overflow-hidden">
-        <div className="flex items-center justify-between p-4 border-b">
-          <div>
-            <p className="font-bold text-sm">المحادثات الخاصة</p>
-            <p className="text-xs text-muted-foreground">تنبيهات الرسائل من الأفراد</p>
+      <div className="space-y-6">
+        <div className="bg-card rounded-2xl border overflow-hidden">
+          <div className="p-4 bg-muted/30 border-b">
+            <h3 className="text-xs font-bold text-primary uppercase tracking-wider">إشعارات الرسائل</h3>
           </div>
-          <Button 
-            variant={notifications.private ? "default" : "outline"} 
-            size="sm" 
-            onClick={() => toggleNotification('private')}
-            className="rounded-full"
-          >
-            {notifications.private ? 'مفعل' : 'معطل'}
-          </Button>
+          
+          <div className="flex items-center justify-between p-4 border-b">
+            <div className="flex-1">
+              <p className="font-bold text-sm">المحادثات الخاصة</p>
+              <p className="text-xs text-muted-foreground">تنبيهات الرسائل من الأفراد</p>
+            </div>
+            <Button 
+              variant={notifications.private ? "default" : "outline"} 
+              size="sm" 
+              onClick={() => toggleNotification('private')}
+              className="rounded-full min-w-16"
+            >
+              {notifications.private ? 'مفعل' : 'معطل'}
+            </Button>
+          </div>
+
+          {notifications.private && (
+            <div className="p-4 border-b bg-primary/5 space-y-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Volume2 className="h-4 w-4 text-primary" />
+                <span className="text-xs font-bold">صوت التنبيه (خاص)</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {NOTIFICATION_SOUNDS.map(sound => (
+                  <Button
+                    key={sound.id}
+                    variant={notifications.privateSound === sound.id ? "default" : "outline"}
+                    size="sm"
+                    className="justify-start text-[10px] h-9 gap-2 rounded-xl"
+                    onClick={() => updateNotificationSound('private', sound.id)}
+                  >
+                    <div className={`w-1.5 h-1.5 rounded-full ${notifications.privateSound === sound.id ? 'bg-white' : 'bg-primary'}`} />
+                    {sound.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between p-4 border-b">
+            <div className="flex-1">
+              <p className="font-bold text-sm">المجموعات</p>
+              <p className="text-xs text-muted-foreground">تنبيهات الرسائل من المجموعات</p>
+            </div>
+            <Button 
+              variant={notifications.groups ? "default" : "outline"} 
+              size="sm" 
+              onClick={() => toggleNotification('groups')}
+              className="rounded-full min-w-16"
+            >
+              {notifications.groups ? 'مفعل' : 'معطل'}
+            </Button>
+          </div>
+
+          {notifications.groups && (
+            <div className="p-4 bg-primary/5 space-y-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Volume2 className="h-4 w-4 text-primary" />
+                <span className="text-xs font-bold">صوت التنبيه (المجموعات)</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {NOTIFICATION_SOUNDS.map(sound => (
+                  <Button
+                    key={sound.id}
+                    variant={notifications.groupSound === sound.id ? "default" : "outline"}
+                    size="sm"
+                    className="justify-start text-[10px] h-9 gap-2 rounded-xl"
+                    onClick={() => updateNotificationSound('group', sound.id)}
+                  >
+                    <div className={`w-1.5 h-1.5 rounded-full ${notifications.groupSound === sound.id ? 'bg-white' : 'bg-primary'}`} />
+                    {sound.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-        <div className="flex items-center justify-between p-4 border-b">
-          <div>
-            <p className="font-bold text-sm">المجموعات</p>
-            <p className="text-xs text-muted-foreground">تنبيهات الرسائل من المجموعات</p>
+
+        <div className="bg-card rounded-2xl border overflow-hidden">
+          <div className="p-4 bg-muted/30 border-b">
+            <h3 className="text-xs font-bold text-primary uppercase tracking-wider">المكالمات</h3>
           </div>
-          <Button 
-            variant={notifications.groups ? "default" : "outline"} 
-            size="sm" 
-            onClick={() => toggleNotification('groups')}
-            className="rounded-full"
-          >
-            {notifications.groups ? 'مفعل' : 'معطل'}
-          </Button>
+          <div className="flex items-center justify-between p-4">
+            <div className="flex-1">
+              <p className="font-bold text-sm">تنبيهات المكالمات</p>
+              <p className="text-xs text-muted-foreground">تنبيه للمكالمات الواردة</p>
+            </div>
+            <Button 
+              variant={notifications.calls ? "default" : "outline"} 
+              size="sm" 
+              onClick={() => toggleNotification('calls')}
+              className="rounded-full min-w-16"
+            >
+              {notifications.calls ? 'مفعل' : 'معطل'}
+            </Button>
+          </div>
         </div>
       </div>
     </SubSettingsView>
@@ -381,6 +529,55 @@ export function Settings() {
               ))}
             </div>
           </div>
+
+          <div className="border-t my-2"></div>
+
+          <div className="p-3">
+            <div className="flex items-center gap-3 mb-4">
+              <ImageIcon className="h-5 w-5 text-primary" />
+              <span className="font-bold text-sm">خلفية الدردشة</span>
+            </div>
+            
+            <input 
+              type="file" 
+              id="bg-upload" 
+              className="hidden" 
+              accept="image/*"
+              onChange={handleBackgroundUpload}
+            />
+            
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                onClick={() => document.getElementById('bg-upload')?.click()}
+                className="aspect-square rounded-xl bg-muted border-2 border-dashed border-primary/20 flex flex-col items-center justify-center gap-1 hover:bg-primary/5 transition-all text-muted-foreground"
+              >
+                <Plus className="h-5 w-5" />
+                <span className="text-[10px]">رفع صورة</span>
+              </button>
+              
+              {CHAT_BACKGROUND_PATTERNS.map((pattern) => (
+                <button
+                  key={pattern}
+                  onClick={() => updateChatBackground(pattern)}
+                  className={`aspect-square rounded-xl border-2 transition-all overflow-hidden relative ${
+                    profile.chatBackground === pattern ? 'border-primary ring-2 ring-primary/20' : 'border-transparent'
+                  }`}
+                  style={{ 
+                    backgroundColor: '#f4f4f7',
+                    backgroundImage: `url(${pattern})`,
+                    backgroundSize: 'auto'
+                  }}
+                >
+                  {profile.chatBackground === pattern && (
+                    <div className="absolute inset-0 bg-primary/10 flex items-center justify-center">
+                      <Check className="h-5 w-5 text-primary" />
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-3 text-center">اختر نمطاً أو ارفع صورة خاصة لتغيير خلفية المحادثات</p>
+          </div>
         </div>
       </div>
     </SubSettingsView>
@@ -448,11 +645,11 @@ function SubSettingsView({ title, onBack, children, language }: { title: string,
         </Button>
         <h2 className="text-xl font-bold">{title}</h2>
       </div>
-      <ScrollArea className="flex-1">
+      <div className="flex-1 overflow-y-auto overscroll-contain">
         <div className="p-4">
           {children}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

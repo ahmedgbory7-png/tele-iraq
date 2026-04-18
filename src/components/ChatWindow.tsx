@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/firebase';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { Message, UserProfile, Chat } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Phone, Video, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, Volume2, VolumeX, VideoOff, Camera, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus } from 'lucide-react';
-import { format } from 'date-fns';
+import { Send, MoreVertical, Paperclip, Smile, ArrowRight, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User } from 'lucide-react';
+import { format, isToday, isYesterday } from 'date-fns';
+import { ar } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { getSystemBotResponse } from '@/lib/gemini';
@@ -17,16 +18,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useStore } from '@/store/useStore';
 
 export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () => void }) {
-  const { profile: currentUser } = useStore();
+  const { profile: currentUser, setViewingProfileId, setShowProfile } = useStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [chatData, setChatData] = useState<Chat | null>(null);
   const [otherProfile, setOtherProfile] = useState<UserProfile | null>(null);
   const [participants, setParticipants] = useState<Record<string, UserProfile>>({});
-  const [isCalling, setIsCalling] = useState(false);
-  const [callType, setCallType] = useState<'voice' | 'video'>('voice');
-  const [speakerOn, setSpeakerOn] = useState(false);
-  const [videoOn, setVideoOn] = useState(true);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -36,6 +33,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showGroupSettings, setShowGroupSettings] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -53,14 +52,18 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   }, []);
 
   useEffect(() => {
+    let otherProfileUnsubscribe: (() => void) | null = null;
+
     const fetchProfiles = async (data: Chat) => {
       if (!data.isGroup) {
         const otherId = data.participants.find((p: string) => p !== currentUser?.uid);
         if (otherId) {
-          const userDoc = await getDoc(doc(db, 'users', otherId));
-          if (userDoc.exists()) {
-            setOtherProfile(userDoc.data() as UserProfile);
-          }
+          // Listen to other user's profile in real-time for "Last Seen"
+          otherProfileUnsubscribe = onSnapshot(doc(db, 'users', otherId), (snapshot) => {
+            if (snapshot.exists()) {
+              setOtherProfile(snapshot.data() as UserProfile);
+            }
+          });
         }
       } else {
         const participantProfiles: Record<string, UserProfile> = {};
@@ -115,22 +118,15 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         const typing = data.typing || {};
         const typingIds = Object.keys(typing).filter(uid => typing[uid] && uid !== currentUser?.uid);
         setTypingUsers(typingIds);
-
-        // Handle Call signaling
-        if (data.call && data.call.status !== 'ended') {
-          setCallType(data.call.type);
-          setIsCalling(true);
-        } else if (data.call?.status === 'ended' || !data.call) {
-          setIsCalling(false);
-        }
       }
     });
 
     return () => {
       unsubscribe();
       chatUnsubscribe();
+      if (otherProfileUnsubscribe) otherProfileUnsubscribe();
     };
-  }, [chatId, currentUser, otherProfile, participants]);
+  }, [chatId, currentUser]);
 
   const updateTypingStatus = async (isTyping: boolean) => {
     if (!currentUser) return;
@@ -158,6 +154,12 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     }, 3000);
   };
 
+  const cancelReplyOrEdit = () => {
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setNewMessage('');
+  };
+
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!newMessage.trim() || !currentUser || !chatData) return;
@@ -181,16 +183,44 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     }
 
     const text = newMessage;
+    
+    if (editingMessage) {
+      try {
+        await updateDoc(doc(db, 'chats', chatId, 'messages', editingMessage.id), {
+          text,
+          isEdited: true
+        });
+        setEditingMessage(null);
+        setNewMessage('');
+        return;
+      } catch (err) {
+        console.error("Error editing message:", err);
+      }
+    }
+
     setNewMessage('');
     setShowEmojiPicker(false);
 
-    const msgData = {
+    const msgData: any = {
       chatId,
       senderId: currentUser.uid,
       text,
       type: 'text',
       createdAt: serverTimestamp()
     };
+
+    if (replyingTo) {
+      const senderName = replyingTo.senderId === currentUser.uid 
+        ? 'أنت' 
+        : (participants[replyingTo.senderId]?.displayName || otherProfile?.displayName || 'مستخدم');
+        
+      msgData.replyTo = {
+        id: replyingTo.id,
+        text: replyingTo.text || (replyingTo.type === 'image' ? 'الصورة' : 'ملف'),
+        senderName
+      };
+      setReplyingTo(null);
+    }
 
     try {
       await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
@@ -354,6 +384,21 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     }
   };
 
+  const startEditMessage = (msg: Message) => {
+    if (msg.senderId !== currentUser?.uid || msg.type !== 'text') return;
+    setEditingMessage(msg);
+    setReplyingTo(null);
+    setNewMessage(msg.text || '');
+    setReactionMenuMessageId(null);
+  };
+
+  const startReplyMessage = (msg: Message) => {
+    setReplyingTo(msg);
+    setEditingMessage(null);
+    setNewMessage('');
+    setReactionMenuMessageId(null);
+  };
+
   const handleDeleteMessage = async (messageId: string) => {
     if (!currentUser) return;
     setReactionMenuMessageId(null);
@@ -429,48 +474,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   const handleMessageClick = (msg: Message) => {
     if ((msg as any).gameId) {
       setActiveGameId((msg as any).gameId);
-    }
-  };
-
-  const startCall = async (type: 'voice' | 'video') => {
-    if (!currentUser) return;
-    setCallType(type);
-    setVideoOn(type === 'video');
-    setIsCalling(true);
-    
-    try {
-      await updateDoc(doc(db, 'chats', chatId), {
-        call: {
-          type,
-          callerId: currentUser.uid,
-          status: 'ringing',
-          startedAt: serverTimestamp()
-        }
-      });
-    } catch (err) {
-      console.error("Error starting call:", err);
-    }
-  };
-
-  const handleEndCall = async () => {
-    setIsCalling(false);
-    try {
-      await updateDoc(doc(db, 'chats', chatId), {
-        'call.status': 'ended',
-        'call.endedAt': serverTimestamp()
-      });
-    } catch (err) {
-      console.error("Error ending call:", err);
-    }
-  };
-
-  const handleAnswerCall = async () => {
-    try {
-      await updateDoc(doc(db, 'chats', chatId), {
-        'call.status': 'active'
-      });
-    } catch (err) {
-      console.error("Error answering call:", err);
     }
   };
 
@@ -565,36 +568,86 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     }
   };
 
+  const formatLastSeen = (profile: UserProfile | null) => {
+    if (!profile) return 'متصل منذ وقت طويل';
+    
+    // Privacy check
+    const privacy = profile.privacy?.lastSeen || 'everyone';
+    if (privacy === 'nobody') {
+      return 'آخر ظهور كان قريباً';
+    }
+    
+    const timestamp = profile.lastSeen;
+    if (!timestamp) return 'متصل منذ وقت طويل';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const now = new Date();
+    const diff = (now.getTime() - date.getTime()) / 1000;
+
+    if (diff < 60) return 'متصل الآن';
+    if (isToday(date)) {
+      return `آخر ظهور اليوم في ${format(date, 'hh:mm a', { locale: ar })}`;
+    }
+    if (isYesterday(date)) {
+      return `آخر ظهور أمس في ${format(date, 'hh:mm a', { locale: ar })}`;
+    }
+    return `آخر ظهور بتاريخ ${format(date, 'yyyy/MM/dd')}`;
+  };
+
   const isMeAdmin = chatData?.isGroup && chatData.admins?.includes(currentUser?.uid || '');
   const iBlockedOther = !chatData?.isGroup && currentUser?.blockedUsers?.includes(otherProfile?.uid || '');
+  const chatBackground = currentUser?.chatBackground;
+  const isPattern = chatBackground?.includes('transparenttextures.com');
 
   return (
-    <div className="flex flex-col h-full telegram-bg relative" dir="rtl">
+    <div 
+      className={`flex flex-col h-full relative ${chatBackground ? '' : 'telegram-bg'}`} 
+      dir="rtl"
+      style={chatBackground ? {
+        backgroundImage: `url(${chatBackground})`,
+        backgroundColor: '#f4f4f7',
+        backgroundRepeat: 'repeat',
+        backgroundAttachment: 'fixed',
+        backgroundSize: isPattern ? 'auto' : 'cover',
+        backgroundPosition: 'center'
+      } : {}}
+    >
       {/* Header */}
-      <div className="p-3 bg-card border-b flex items-center justify-between shadow-sm z-10">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="rounded-full" onClick={onClose} title="رجوع">
+      <div className="glass-header p-3 flex items-center justify-between shadow-sm safe-top">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" className="rounded-full ios-touch mr-1" onClick={onClose} title="رجوع">
             <ArrowRight className="h-6 w-6 text-primary" />
           </Button>
-          <Avatar className="h-10 w-10 border-2 border-primary/10">
-            <AvatarImage src={chatData?.isGroup ? chatData.groupPhoto : otherProfile?.photoURL} />
-            <AvatarFallback 
-              className="text-white font-bold bg-muted-foreground/20 text-muted-foreground"
-            >
-              {(chatData?.isGroup ? chatData.groupName : otherProfile?.displayName)?.slice(0, 2).toUpperCase() || 'CH'}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex flex-col">
-            <span 
-              className={`font-bold text-sm ${(!chatData?.isGroup && otherProfile?.nameColor === 'magic') ? 'magic-color-text' : ''}`} 
-              style={{ color: (chatData?.isGroup ? '#8b5cf6' : (otherProfile?.nameColor === 'magic' ? undefined : (otherProfile?.nameColor || '#141414'))) }}
-            >
-              {chatData?.isGroup ? chatData.groupName : (otherProfile?.displayName || 'مستخدم تليعراق')}
-            </span>
-            <span className="text-[10px] text-primary font-medium">
-              {isTyping ? 'جاري الكتابة...' : (chatData?.isGroup ? `${chatData.participants.length} عضو` : 'متصل الآن')}
-            </span>
-          </div>
+          <motion.div 
+            whileTap={{ scale: 0.95 }}
+            className="flex items-center gap-3 cursor-pointer hover:bg-muted/50 p-1 rounded-xl transition-colors min-w-0"
+            onClick={() => {
+              if (chatData?.isGroup) {
+                setShowGroupSettings(true);
+                return;
+              }
+              if (otherProfile) setViewingProfileId(otherProfile.uid);
+            }}
+          >
+            <Avatar className="h-10 w-10 border-2 border-primary/10">
+              <AvatarImage src={chatData?.isGroup ? chatData.groupPhoto : otherProfile?.photoURL} />
+              <AvatarFallback 
+                className="text-white font-bold bg-muted-foreground/20 text-muted-foreground"
+              >
+                {(chatData?.isGroup ? chatData.groupName : otherProfile?.displayName)?.slice(0, 2).toUpperCase() || 'CH'}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex flex-col">
+              <span 
+                className={`font-bold text-sm ${(!chatData?.isGroup && otherProfile?.nameColor === 'magic') ? 'magic-color-text' : ''}`} 
+                style={{ color: (chatData?.isGroup ? '#8b5cf6' : (otherProfile?.nameColor === 'magic' ? undefined : (otherProfile?.nameColor || '#141414'))) }}
+              >
+                {chatData?.isGroup ? chatData.groupName : (otherProfile?.displayName || 'مستخدم تليعراق')}
+              </span>
+              <span className="text-[10px] text-primary font-medium">
+                {isTyping ? 'جاري الكتابة...' : (chatData?.isGroup ? `${chatData.participants.length} عضو` : formatLastSeen(otherProfile))}
+              </span>
+            </div>
+          </motion.div>
         </div>
           <div className="flex items-center gap-1 relative">
             <Button 
@@ -626,6 +679,14 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                       </Button>
                       <Button 
                         variant="ghost" 
+                        className="w-full justify-start text-xs rounded-xl h-10 gap-2"
+                        onClick={() => { setShowProfile(true); setShowMoreMenu(false); }}
+                      >
+                        <User className="w-4 h-4 text-primary" />
+                        مشاهدة ملفي الشخصي
+                      </Button>
+                      <Button 
+                        variant="ghost" 
                         className="w-full justify-start text-xs text-destructive rounded-xl h-10 gap-2 hover:bg-destructive/10"
                         onClick={leaveGroup}
                       >
@@ -645,6 +706,14 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                     </>
                   ) : (
                     <>
+                      <Button 
+                        variant="ghost" 
+                        className="w-full justify-start text-xs rounded-xl h-10 gap-2"
+                        onClick={() => { if(otherProfile) setViewingProfileId(otherProfile.uid); setShowMoreMenu(false); }}
+                      >
+                        <User className="w-4 h-4 text-primary" />
+                        مشاهدة الملف الشخصي
+                      </Button>
                       <Button 
                         variant="ghost" 
                         className={`w-full justify-start text-xs rounded-xl h-10 gap-2 ${iBlockedOther ? 'text-green-500' : 'text-destructive'}`}
@@ -670,27 +739,11 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
               <Gamepad2 className="h-5 w-5" />
             </Button>
           )}
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10"
-            onClick={() => startCall('voice')}
-          >
-            <Phone className="h-5 w-5" />
-          </Button>
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10"
-            onClick={() => startCall('video')}
-          >
-            <Video className="h-5 w-5" />
-          </Button>
         </div>
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 no-scrollbar bg-transparent">
+      <div className="flex-1 overflow-y-auto no-scrollbar bg-transparent overscroll-contain">
         <div className="p-4 min-h-full">
           <div className="space-y-2 max-w-3xl mx-auto pb-4">
           <AnimatePresence initial={false}>
@@ -706,12 +759,29 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                   initial={{ opacity: 0, y: 10, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  className={`flex ${isMe ? 'justify-start' : 'justify-end'} items-end gap-2 mb-1 touch-pan-y`}
+                  drag="x"
+                  dragConstraints={{ left: 0, right: 0 }}
+                  dragElastic={{ left: 0.5, right: 0 }}
+                  onDragEnd={(_, info) => {
+                    if (info.offset.x < -60) {
+                      startReplyMessage(msg);
+                    }
+                  }}
+                  className={`flex ${isMe ? 'justify-start' : 'justify-end'} items-end gap-2 mb-1 group relative`}
                 >
+                  {/* Swipe Reply Indicator */}
+                  <div className="absolute -left-12 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 transition-opacity pointer-events-none">
+                    <ArrowRight className="w-6 h-6 rotate-180 text-primary animate-pulse" />
+                  </div>
                   {!isMe && (
                     <div className="w-8 shrink-0">
                       {showAvatar && (
-                        <Avatar className="h-8 w-8 border border-border/50">
+                        <Avatar 
+                          className="h-8 w-8 border border-border/50 cursor-pointer hover:ring-2 ring-primary/30 transition-all"
+                          onClick={() => {
+                            if (senderProfile) setViewingProfileId(senderProfile.uid);
+                          }}
+                        >
                           <AvatarImage src={senderProfile?.photoURL} />
                           <AvatarFallback 
                             className="text-white text-[10px] font-bold bg-muted-foreground/20 text-muted-foreground"
@@ -737,6 +807,26 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                           : 'bg-card text-foreground rounded-br-none'
                       } ${!isLastInGroup ? (isMe ? 'rounded-bl-2xl' : 'rounded-br-2xl') : ''}`}
                     >
+                      {/* Telegram Tail */}
+                      {isLastInGroup && (
+                        <div className={`absolute bottom-[-1px] ${isMe ? '-left-2' : '-right-2'}`}>
+                          <svg width="10" height="10" viewBox="0 0 10 10" className={isMe ? 'text-primary fill-current' : 'text-card fill-current'}>
+                            <path d={isMe ? "M10 0 L10 10 L0 10 Q5 10 10 0" : "M0 0 L0 10 L10 10 Q5 10 0 0"} />
+                          </svg>
+                        </div>
+                      )}
+                      
+                      {msg.replyTo && (
+                        <div 
+                          className={`mb-2 p-2 rounded-lg border-r-4 text-[11px] bg-black/5 flex flex-col gap-0.5 max-w-full overflow-hidden ${
+                            isMe ? 'border-r-white/50 text-white/90' : 'border-r-primary text-primary'
+                          }`}
+                        >
+                          <span className="font-bold truncate">{msg.replyTo.senderName}</span>
+                          <span className="opacity-80 truncate">{msg.replyTo.text}</span>
+                        </div>
+                      )}
+                      
                       {chatData?.isGroup && !isMe && showAvatar && (
                         <p 
                           className={`text-[10px] font-bold mb-0.5 ${senderProfile?.nameColor === 'magic' ? 'magic-color-text' : ''}`} 
@@ -795,7 +885,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         </div>
                       )}
                       <div className={`text-[10px] flex items-center justify-end gap-1 ${isMe ? 'text-white/80' : 'text-muted-foreground'}`}>
-                        <span>{msg.createdAt?.toDate ? format(msg.createdAt.toDate(), 'HH:mm') : '...'}</span>
+                        {msg.isEdited && <span className="opacity-60 italic ml-1">معدلة</span>}
+                        <span>{msg.createdAt?.toDate ? format(msg.createdAt.toDate(), 'hh:mm a', { locale: ar }) : '...'}</span>
                         {isMe && (
                           <span>
                             {msg.read ? (
@@ -807,39 +898,55 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         )}
                       </div>
 
-                      {/* Reaction Menu Overlay */}
                       <AnimatePresence>
                         {reactionMenuMessageId === msg.id && (
                           <motion.div 
                             initial={{ opacity: 0, scale: 0.5, y: 10 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.5, y: 10 }}
-                            className={`absolute -top-12 ${isMe ? 'right-0' : 'left-0'} bg-card border shadow-xl rounded-full p-1 flex gap-1 z-50`}
+                            className={`absolute -top-12 ${isMe ? 'right-0' : 'left-0'} bg-card border shadow-xl rounded-full p-1 flex gap-1 z-50 overflow-hidden`}
                           >
-                            {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
-                              <button 
-                                key={emoji}
-                                onClick={() => handleReaction(msg.id, emoji)}
-                                className="hover:bg-muted p-1.5 rounded-full transition-transform hover:scale-125 active:scale-90 text-lg"
+                            <div className="flex gap-1 px-2 items-center">
+                              {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
+                                <button 
+                                  key={emoji}
+                                  onClick={() => handleReaction(msg.id, emoji)}
+                                  className="hover:scale-125 transition-transform p-1 text-lg active:scale-90"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                              <div className="w-[1px] h-6 bg-border mx-1" />
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-8 w-8 text-primary hover:bg-primary/10 rounded-full"
+                                onClick={() => startReplyMessage(msg)}
+                                title="رد"
                               >
-                                {emoji}
-                              </button>
-                            ))}
-                            <button 
-                              onClick={() => setReactionMenuMessageId(null)}
-                              className="p-1.5 text-muted-foreground hover:text-foreground"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                            {isMe && (
-                              <button 
+                                <ArrowRight className="h-4 w-4 rotate-180" />
+                              </Button>
+                              {isMe && msg.type === 'text' && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="h-8 w-8 text-primary hover:bg-primary/10 rounded-full"
+                                  onClick={() => startEditMessage(msg)}
+                                  title="تعديل"
+                                >
+                                  <FileText className="h-4 w-4" />
+                                </Button>
+                              )}
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-8 w-8 text-destructive hover:bg-destructive/10 rounded-full"
                                 onClick={() => handleDeleteMessage(msg.id)}
-                                className="p-1.5 text-destructive hover:bg-destructive/10 rounded-full transition-colors"
-                                title="حذف الرسالة"
+                                title="حذف"
                               >
                                 <Trash2 className="h-4 w-4" />
-                              </button>
-                            )}
+                              </Button>
+                            </div>
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -920,10 +1027,34 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
           <div ref={scrollRef} />
         </div>
       </div>
-    </ScrollArea>
+    </div>
 
       {/* Input */}
       <div className="p-4 bg-card border-t relative">
+        <AnimatePresence>
+          {(replyingTo || editingMessage) && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="px-4 py-2 bg-muted/30 border-t flex items-center justify-between mb-2 rounded-xl"
+            >
+              <div className="flex items-center gap-3 border-r-4 border-primary pr-3">
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-primary">
+                    {replyingTo ? 'الرد على' : 'تعديل الرسالة'}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">
+                    {replyingTo ? (replyingTo.text || 'وسائط') : (editingMessage?.text || '')}
+                  </span>
+                </div>
+              </div>
+              <Button size="icon" variant="ghost" className="h-6 w-6 rounded-full" onClick={cancelReplyOrEdit}>
+                <X className="h-4 w-4" />
+              </Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
         {showEmojiPicker && (
           <div className="absolute bottom-20 left-4 z-50 shadow-2xl rounded-2xl overflow-hidden border" ref={emojiPickerRef}>
             <EmojiPicker 
@@ -948,7 +1079,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             type="button" 
             variant="ghost" 
             size="icon" 
-            className="rounded-full text-muted-foreground shrink-0"
+            className="rounded-full text-muted-foreground shrink-0 ios-touch"
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
           >
@@ -958,7 +1089,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             type="button" 
             variant="ghost" 
             size="icon" 
-            className={`rounded-full shrink-0 ${isLocating ? 'text-primary animate-pulse' : 'text-muted-foreground'}`}
+            className={`rounded-full shrink-0 ios-touch ${isLocating ? 'text-primary animate-pulse' : 'text-muted-foreground'}`}
             onClick={handleShareLocation}
             disabled={isLocating}
             title="مشاركة الموقع"
@@ -976,7 +1107,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
               type="button" 
               variant="ghost" 
               size="icon" 
-              className={`absolute left-1 top-1 rounded-full h-9 w-9 transition-colors ${showEmojiPicker ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+              className={`absolute left-1 top-1 rounded-full h-9 w-9 transition-colors ios-touch ${showEmojiPicker ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
               onClick={() => setShowEmojiPicker(!showEmojiPicker)}
             >
               <Smile className="h-5 w-5" />
@@ -985,155 +1116,13 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
           <Button 
             type="submit" 
             size="icon" 
-            className={`rounded-full h-11 w-11 shrink-0 transition-all ${newMessage.trim() ? 'purple-gradient scale-100' : 'bg-muted text-muted-foreground scale-90'}`}
+            className={`rounded-full h-11 w-11 shrink-0 transition-all ios-touch ${newMessage.trim() ? 'purple-gradient scale-100' : 'bg-muted text-muted-foreground scale-90'}`}
             disabled={!newMessage.trim() || isTyping}
           >
             <Send className="h-5 w-5 rotate-180" />
           </Button>
         </form>
       </div>
-
-      {/* Group Call Overlay */}
-      <AnimatePresence>
-        {isCalling && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 1.1 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            className="absolute inset-0 z-[200] bg-zinc-950 flex flex-col text-white overflow-hidden"
-          >
-            {/* Video Background / Preview */}
-            {callType === 'video' && videoOn ? (
-              <div className="absolute inset-0 z-0">
-                <img 
-                  src={`https://picsum.photos/seed/${otherProfile?.uid}/1080/1920?blur=2`} 
-                  className="w-full h-full object-cover opacity-40"
-                  alt="Remote Video"
-                  referrerPolicy="no-referrer"
-                />
-                <div className="absolute bottom-24 right-4 w-32 h-48 bg-black rounded-xl border-2 border-white/20 overflow-hidden shadow-2xl z-20">
-                  <img 
-                    src={`https://picsum.photos/seed/${currentUser?.uid}/300/500`} 
-                    className="w-full h-full object-cover"
-                    alt="Local Preview"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="absolute top-2 right-2 bg-black/40 p-1 rounded">
-                    <Camera className="w-3 h-3" />
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="absolute inset-0 z-0 purple-gradient opacity-10"></div>
-            )}
-
-            <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6 gap-6">
-              <div className="relative mt-auto">
-                <Avatar className="h-32 w-32 border-4 border-primary shadow-[0_0_50px_rgba(139,92,246,0.3)]">
-                  <AvatarImage src={otherProfile?.photoURL} />
-                  <AvatarFallback 
-                    className={`text-4xl font-bold text-white ${otherProfile?.nameColor === 'magic' ? 'magic-color-bg' : 'bg-zinc-800'}`}
-                  >
-                    {otherProfile?.displayName?.slice(0, 2).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <div className={`absolute -top-2 -right-2 p-2 rounded-full shadow-lg ${callType === 'video' ? 'bg-blue-500' : 'bg-green-500'}`}>
-                  {callType === 'video' ? <Video className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
-                </div>
-              </div>
-              <div className="text-center">
-                <h3 className={`text-2xl font-bold mb-1 ${otherProfile?.nameColor === 'magic' ? 'magic-color-text' : ''}`}>
-                  {otherProfile?.displayName}
-                </h3>
-                <p className="text-primary/80 animate-pulse font-medium">
-                  {chatData?.call?.status === 'ringing' 
-                    ? (chatData.call.callerId === currentUser?.uid ? 'جاري الاتصال...' : 'مكالمة واردة...') 
-                    : (callType === 'video' ? 'مكالمة فيديو جارية' : 'مكالمة صوتية جارية')}
-                </p>
-                {chatData?.call?.status === 'active' && (
-                  <div className="mt-4 flex items-center justify-center gap-2 text-xs text-white/40">
-                    <span className="w-2 h-2 rounded-full bg-green-500 animate-ping"></span>
-                    متصل الآن
-                  </div>
-                )}
-              </div>
-              
-              <div className="flex justify-center gap-8 mt-auto mb-12 w-full max-w-sm px-6">
-                {chatData?.call?.status === 'ringing' && chatData.call.callerId !== currentUser?.uid ? (
-                  <>
-                    <div className="flex flex-col items-center gap-2">
-                      <Button 
-                        size="icon" 
-                        className="w-16 h-16 rounded-full bg-green-500 hover:bg-green-600 shadow-2xl shadow-green-500/40 animate-bounce" 
-                        onClick={handleAnswerCall}
-                      >
-                        <Phone className="w-8 h-8" />
-                      </Button>
-                      <span className="text-xs font-bold text-green-400">رد</span>
-                    </div>
-                    <div className="flex flex-col items-center gap-2">
-                      <Button 
-                        variant="destructive" 
-                        size="icon" 
-                        className="w-16 h-16 rounded-full shadow-2xl shadow-red-500/40" 
-                        onClick={handleEndCall}
-                      >
-                        <Phone className="w-8 h-8 rotate-[135deg]" />
-                      </Button>
-                      <span className="text-xs font-bold text-red-400">رفض</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex flex-col items-center gap-2">
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className={`w-14 h-14 rounded-full transition-all ${speakerOn ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white'}`}
-                        onClick={() => setSpeakerOn(!speakerOn)}
-                      >
-                        {speakerOn ? <Volume2 className="w-6 h-6" /> : <VolumeX className="w-6 h-6" />}
-                      </Button>
-                      <span className="text-[10px] opacity-60">مكبر الصوت</span>
-                    </div>
-
-                    <div className="flex flex-col items-center gap-2">
-                      <Button 
-                        variant="destructive" 
-                        size="icon" 
-                        className="w-16 h-16 rounded-full shadow-2xl shadow-red-500/40 hover:scale-105 active:scale-95" 
-                        onClick={handleEndCall}
-                      >
-                        <Phone className="w-8 h-8 rotate-[135deg]" />
-                      </Button>
-                      <span className="text-[10px] opacity-80 text-red-400 font-bold">إنهاء</span>
-                    </div>
-
-                    <div className="flex flex-col items-center gap-2">
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className={`w-14 h-14 rounded-full transition-all ${callType === 'video' && videoOn ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/20 text-white'}`}
-                        onClick={() => {
-                          if (callType === 'voice') {
-                            setCallType('video');
-                            setVideoOn(true);
-                          } else {
-                            setVideoOn(!videoOn);
-                          }
-                        }}
-                      >
-                        {videoOn && callType === 'video' ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
-                      </Button>
-                      <span className="text-[10px] opacity-60">{callType === 'video' ? 'الكاميرا' : 'فيديو'}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Domino Game Overlay */}
       <AnimatePresence>
@@ -1153,6 +1142,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
           </motion.div>
         )}
       </AnimatePresence>
+
       {/* Group Settings Dialog */}
       <Dialog open={showGroupSettings} onOpenChange={setShowGroupSettings}>
         <DialogContent className="max-w-sm rounded-2xl p-0 overflow-hidden border-none" dir="rtl">
@@ -1165,7 +1155,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
           <div className="p-4 space-y-4">
             <div>
               <h4 className="text-xs font-bold text-muted-foreground mb-3 px-1 uppercase tracking-wider">الأعضاء ({chatData?.participants.length})</h4>
-              <ScrollArea className="h-64 pr-2">
+              <div className="h-64 pr-2 overflow-y-auto overscroll-contain">
                 <div className="space-y-2">
                   {chatData?.participants.map(uid => {
                     const p = participants[uid];
@@ -1174,22 +1164,34 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                     
                     return (
                       <div key={uid} className="flex items-center justify-between p-2 rounded-xl hover:bg-muted/50 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="h-8 w-8">
-                            <AvatarImage src={p?.photoURL} />
-                            <AvatarFallback style={{ backgroundColor: p?.nameColor || '#8b5cf6' }} className="text-white text-[10px]">
-                              {p?.displayName?.slice(0, 2)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex flex-col">
-                            <span className="text-sm font-bold flex items-center gap-1">
-                              {p?.displayName || 'مستخدم'}
-                              {isMe && <span className="text-[10px] text-muted-foreground">(أنت)</span>}
-                              {isAdmin && <ShieldCheck className="w-3 h-3 text-primary" />}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground">{isAdmin ? 'مشرف' : 'عضو'}</span>
-                          </div>
-                        </div>
+                    <div className="flex items-center gap-3">
+                      <Avatar 
+                        className="h-8 w-8 cursor-pointer hover:ring-2 ring-primary/30 transition-all"
+                        onClick={() => {
+                          if (uid) setViewingProfileId(uid);
+                          setShowGroupSettings(false);
+                        }}
+                      >
+                        <AvatarImage src={p?.photoURL} />
+                        <AvatarFallback style={{ backgroundColor: p?.nameColor || '#8b5cf6' }} className="text-white text-[10px]">
+                          {p?.displayName?.slice(0, 2)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div 
+                        className="flex flex-col cursor-pointer"
+                        onClick={() => {
+                          if (uid) setViewingProfileId(uid);
+                          setShowGroupSettings(false);
+                        }}
+                      >
+                        <span className="text-sm font-bold flex items-center gap-1">
+                          {p?.displayName || 'مستخدم'}
+                          {isMe && <span className="text-[10px] text-muted-foreground">(أنت)</span>}
+                          {isAdmin && <ShieldCheck className="w-3 h-3 text-primary" />}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">{isAdmin ? 'مشرف' : 'عضو'}</span>
+                      </div>
+                    </div>
                         
                         {isMeAdmin && !isMe && (
                           <div className="flex gap-1">
@@ -1229,7 +1231,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                     );
                   })}
                 </div>
-              </ScrollArea>
+              </div>
             </div>
             
             <div className="pt-2 border-t flex flex-col gap-2">

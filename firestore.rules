@@ -57,8 +57,13 @@ service cloud.firestore {
     function isValidChat(data) {
       return data.keys().hasAll(['participants', 'updatedAt']) &&
              data.participants is list &&
-             data.participants.size() >= 2 &&
+             data.participants.size() >= 1 &&
              request.auth.uid in data.participants &&
+             (!('isGroup' in data) || data.isGroup is bool) &&
+             (!('groupName' in data) || data.groupName is string) &&
+             (!('groupPhoto' in data) || data.groupPhoto is string) &&
+             (!('admins' in data) || data.admins is list) &&
+             (!('typing' in data) || (data.typing is map)) &&
              data.updatedAt is timestamp;
     }
 
@@ -71,6 +76,10 @@ service cloud.firestore {
              (!('fileUrl' in data) || data.fileUrl is string) &&
              (!('fileName' in data) || data.fileName is string) &&
              (!('location' in data) || (data.location is map && data.location.latitude is number && data.location.longitude is number)) &&
+             (!('replyTo' in data) || (data.replyTo is map && data.replyTo.id is string && data.replyTo.senderName is string)) &&
+             (!('forwardFrom' in data) || (data.forwardFrom is map && data.forwardFrom.senderName is string && data.forwardFrom.chatId is string)) &&
+             (!('gameId' in data) || data.gameId is string) &&
+             (!('isEdited' in data) || data.isEdited is bool) &&
              data.createdAt is timestamp;
     }
 
@@ -107,7 +116,9 @@ service cloud.firestore {
                         // Allow marking as read
                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) && request.resource.data.read == true) ||
                         // Allow adding/removing reactions
-                        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']))
+                        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])) ||
+                        // Allow editing message (text and isEdited) by the sender
+                        (resource.data.senderId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'isEdited']) && isValidMessage(request.resource.data))
                       );
         allow delete: if isAuthenticated() && 
                       (resource.data.senderId == request.auth.uid || 

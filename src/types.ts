@@ -13,6 +13,9 @@ export interface UserProfile {
   };
   reels?: { id: string; url: string; createdAt: any; caption?: string }[];
   blockedUsers?: string[]; // Array of UIDs this user has blocked
+  chatBackground?: string;
+  magicUnlockedAt?: any;
+  sessionVersion?: number;
 }
 
 export interface Chat {
@@ -49,6 +52,9 @@ export interface Message {
   createdAt: any;
   read?: boolean;
   reactions?: { [emoji: string]: string[] }; // emoji -> list of userIds
+  gameId?: string;
+  replyTo?: { id: string; text: string; senderName: string };
+  isEdited?: boolean;
 }
 
 export interface DominoGame {

@@ -141,6 +141,9 @@
     width: 100%;
     margin: 0;
     padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: pan-y;
   }
   #root {
     height: 100%;
@@ -212,6 +215,25 @@
   0% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
+}
+
+.glass-header {
+  @apply bg-background/80 backdrop-blur-xl border-b;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.ios-touch {
+  @apply transition-all active:scale-[0.97] active:opacity-80;
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 @custom-variant dark (&:is(.dark *));
