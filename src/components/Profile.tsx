@@ -8,7 +8,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ArrowRight, Camera, Check, Loader2, Lock, Plus, Trash2, Play, MessageSquare, User } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ar } from 'date-fns/locale';
 
@@ -60,7 +60,9 @@ export function Profile() {
   const [saved, setSaved] = useState(false);
   
   const [isMagicUnlocked, setIsMagicUnlocked] = useState(false);
-  const [remainingDays, setRemainingDays] = useState<number | null>(null);
+  const [isAnimatedUnlocked, setIsAnimatedUnlocked] = useState(false);
+  const [remainingDaysMagic, setRemainingDaysMagic] = useState<number | null>(null);
+  const [remainingDaysAnimated, setRemainingDaysAnimated] = useState<number | null>(null);
 
   useEffect(() => {
     if (currentProfile?.magicUnlockedAt) {
@@ -71,25 +73,25 @@ export function Profile() {
       
       if (days > 0) {
         setIsMagicUnlocked(true);
-        setRemainingDays(days);
+        setRemainingDaysMagic(days);
       } else {
         setIsMagicUnlocked(false);
-        setRemainingDays(0);
-        // If it was 'magic', reset to default
+        setRemainingDaysMagic(0);
         if (nameColor === 'magic') setNameColor('#141414');
       }
     } else {
       setIsMagicUnlocked(false);
-      setRemainingDays(null);
+      setRemainingDaysMagic(null);
     }
   }, [currentProfile, nameColor]);
 
-  const [isMagicDialogOpen, setIsMagicDialogOpen] = useState(false);
+  const [showColorPicker, setShowColorPicker] = useState(false);
   const [magicCode, setMagicCode] = useState('');
   const [isReelsOpen, setIsReelsOpen] = useState(false);
   const [reelCaption, setReelCaption] = useState('');
   const [reelUrl, setReelUrl] = useState('');
   const [uploadingReel, setUploadingReel] = useState(false);
+  const [isMagicDialogOpen, setIsMagicDialogOpen] = useState(false);
 
   const formatLastSeen = (p: UserProfile | null) => {
     if (!p) return 'متصل منذ وقت طويل';
@@ -137,7 +139,7 @@ export function Profile() {
     setNameColor(color);
   };
 
-  const handleMagicUnlock = async () => {
+  const handleUnlockCode = async () => {
     if (magicCode === '900') {
       try {
         setLoading(true);
@@ -149,10 +151,11 @@ export function Profile() {
         setNameColor('magic');
         setIsMagicDialogOpen(false);
         setSaved(true);
+        setMagicCode('');
         setTimeout(() => setSaved(false), 2000);
       } catch (err) {
         console.error(err);
-        alert('فشل تفعيل اللون السحري');
+        alert('فشل تفعيل الميزات المميزة');
       } finally {
         setLoading(false);
       }
@@ -189,7 +192,32 @@ export function Profile() {
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setPhotoURL(reader.result as string);
+        const img = new Image();
+        img.src = reader.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          const maxDimension = 600;
+
+          if (width > height) {
+            if (width > maxDimension) {
+              height *= maxDimension / width;
+              width = maxDimension;
+            }
+          } else {
+            if (height > maxDimension) {
+              width *= maxDimension / height;
+              height = maxDimension;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          setPhotoURL(canvas.toDataURL('image/jpeg', 0.8));
+        };
       };
       reader.readAsDataURL(file);
     }
@@ -312,7 +340,9 @@ export function Profile() {
             animate={{ scale: 1, opacity: 1 }}
             className="flex flex-col gap-1"
           >
-            <h1 className={`text-3xl font-bold tracking-tight ${nameColor === 'magic' ? 'magic-color-text' : ''}`} style={{ color: nameColor === 'magic' ? undefined : nameColor === '#141414' ? 'white' : nameColor }}>
+            <h1 className={`text-3xl font-bold tracking-tight ${
+              nameColor === 'magic' ? 'magic-color-text' : ''
+            }`} style={{ color: nameColor === 'magic' ? undefined : nameColor === '#141414' ? 'white' : nameColor }}>
               {displayName || 'مستخدم جديد'}
             </h1>
             <p className="text-white/60 text-sm font-medium">{formatLastSeen(currentProfile)}</p>
@@ -355,7 +385,11 @@ export function Profile() {
                       className="h-10 bg-muted/20 border-border/40 rounded-xl text-right font-medium"
                     />
                   ) : (
-                    <p className="font-bold">{currentProfile.displayName}</p>
+                    <p className={`font-bold ${
+                      currentProfile.nameColor === 'magic' ? 'magic-color-text' : ''
+                    }`} style={{ color: currentProfile.nameColor === 'magic' ? undefined : (currentProfile.nameColor || 'inherit') }}>
+                      {currentProfile.displayName}
+                    </p>
                   )}
                 </div>
 
@@ -373,37 +407,75 @@ export function Profile() {
                   )}
                 </div>
 
-                {isMe && (
-                  <div className="space-y-3 pt-2">
-                    <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">لون التميز</label>
-                    <div className="flex flex-wrap gap-2 justify-end">
-                      {colors.map(color => (
-                        <button
-                          key={color}
-                          onClick={() => handleColorClick(color)}
-                          className={`w-10 h-10 rounded-full border-2 transition-all hover:scale-110 active:scale-90 ${nameColor === color ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-transparent'}`}
-                          style={{ backgroundColor: color }}
+                <div className="flex flex-col gap-2 border-b pb-4">
+                  <div 
+                    className="flex items-center justify-between cursor-pointer"
+                    onClick={() => isMe && setShowColorPicker(!showColorPicker)}
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">لون الاسم</span>
+                      <div className="flex items-center gap-2">
+                        <div 
+                          className={`w-6 h-6 rounded-full border border-white/20 ${
+                            nameColor === 'magic' ? 'magic-color-bg' : ''
+                          }`} 
+                          style={{ backgroundColor: nameColor === 'magic' ? undefined : nameColor }}
                         />
-                      ))}
-                      <button
-                        onClick={() => isMagicUnlocked ? setNameColor('magic') : setIsMagicDialogOpen(true)}
-                        className={`group relative w-24 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
-                      >
-                        <div className={`absolute inset-0 magic-color-bg opacity-40 ${!isMagicUnlocked ? 'grayscale blur-[1px]' : ''}`} />
-                        {isMagicUnlocked ? (
-                          <>
-                            <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري</span>
-                            {remainingDays !== null && (
-                              <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDays} يوم متبقي</span>
-                            )}
-                          </>
-                        ) : (
-                          <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
-                        )}
-                      </button>
+                        <span className={`font-bold text-sm ${
+                          nameColor === 'magic' ? 'magic-color-text' : ''
+                        }`} style={{ color: nameColor === 'magic' ? undefined : nameColor }}>
+                          {nameColor === 'magic' ? 'سحري' : 'لون مخصص'}
+                        </span>
+                      </div>
                     </div>
+                    {isMe && (
+                      <motion.div animate={{ rotate: showColorPicker ? 180 : 0 }}>
+                        <ArrowRight className="h-5 w-5 text-muted-foreground rotate-90" />
+                      </motion.div>
+                    )}
                   </div>
-                )}
+
+                  <AnimatePresence>
+                    {isMe && showColorPicker && (
+                      <motion.div 
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden space-y-4 pt-4"
+                      >
+                        <div className="flex flex-wrap gap-2 justify-start">
+                          {colors.map(color => (
+                            <button
+                              key={color}
+                              onClick={() => handleColorClick(color)}
+                              className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 active:scale-90 ${nameColor === color ? 'border-primary ring-2 ring-primary/20 shadow-lg' : 'border-transparent'}`}
+                              style={{ backgroundColor: color }}
+                            />
+                          ))}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 justify-start mt-4">
+                          <button
+                            onClick={() => isMagicUnlocked ? setNameColor('magic') : setIsMagicDialogOpen(true)}
+                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
+                          >
+                            <div className={`absolute inset-0 magic-color-bg opacity-40 ${!isMagicUnlocked ? 'grayscale blur-[1px]' : ''}`} />
+                            {isMagicUnlocked ? (
+                              <>
+                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري</span>
+                                {remainingDaysMagic !== null && (
+                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagic} يوم</span>
+                                )}
+                              </>
+                            ) : (
+                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
+                            )}
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               </div>
             </section>
             
@@ -522,11 +594,11 @@ export function Profile() {
       <Dialog open={isMagicDialogOpen} onOpenChange={setIsMagicDialogOpen}>
         <DialogContent className="sm:max-w-md" dir="rtl">
           <DialogHeader>
-            <DialogTitle>فتح اللون السحري 🌈</DialogTitle>
+            <DialogTitle>تفعيل الميزات المميزة 🌈✨</DialogTitle>
           </DialogHeader>
           <div className="py-4 space-y-4">
             <p className="text-sm text-muted-foreground text-right italic font-bold">بواسطة المطور: أبو وطن</p>
-            <p className="text-sm text-foreground text-right font-medium">أدخل الكود السري لتفعيل اللون المتعدد للأفراد المميزين فقط.</p>
+            <p className="text-sm text-foreground text-right font-medium">أدخل كود التفعيل لفتح الألوان السحرية والمتحركة لمدة شهر واحد.</p>
             <Input 
               placeholder="أدخل الكود هنا..." 
               value={magicCode}
@@ -536,7 +608,7 @@ export function Profile() {
           </div>
           <DialogFooter className="flex flex-row gap-2 sm:justify-end">
             <Button variant="outline" onClick={() => setIsMagicDialogOpen(false)} className="flex-1 sm:flex-none h-12 rounded-xl">إلغاء</Button>
-            <Button onClick={handleMagicUnlock} className="flex-1 sm:flex-none h-12 rounded-xl purple-gradient">تأكيد</Button>
+            <Button onClick={handleUnlockCode} className="flex-1 sm:flex-none h-12 rounded-xl purple-gradient">تأكيد</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

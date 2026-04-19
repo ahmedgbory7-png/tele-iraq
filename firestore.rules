@@ -42,28 +42,52 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isParticipant(participants) {
-      return isAuthenticated() && request.auth.uid in participants;
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
     }
 
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'phoneNumber']) &&
+      return data.keys().hasAll(['uid']) &&
              (data.uid == request.auth.uid || data.uid == 'teleiraq-system') &&
-             data.phoneNumber is string &&
-             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
-             (!('status' in data) || (data.status is string && data.status.size() < 200));
+             (!('phoneNumber' in data) || data.phoneNumber is string) &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 200)) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1000000)) &&
+             (!('status' in data) || (data.status is string && data.status.size() <= 300)) &&
+             (!('lastSeen' in data) || (data.lastSeen == null || data.lastSeen is timestamp)) &&
+             (!('chatBackground' in data) || (data.chatBackground is string && data.chatBackground.size() <= 1000)) &&
+             (!('privacy' in data) || data.privacy is map) &&
+             (!('notificationSounds' in data) || data.notificationSounds is map) &&
+             (!('sessionVersion' in data) || data.sessionVersion is number) &&
+             (!('friends' in data) || (data.friends is list && data.friends.size() <= 1000)) &&
+             (!('blockedUsers' in data) || (data.blockedUsers is list && data.blockedUsers.size() <= 1000)) &&
+             (!('magicUnlockedAt' in data) || (data.magicUnlockedAt == null || data.magicUnlockedAt is timestamp)) &&
+             (!('animatedColorsUnlockedAt' in data) || (data.animatedColorsUnlockedAt == null || data.animatedColorsUnlockedAt is timestamp)) &&
+             (!('nameColor' in data) || (data.nameColor is string && data.nameColor.size() <= 50)) &&
+             (!('reels' in data) || (data.reels is list && data.reels.size() <= 100));
     }
 
     function isValidChat(data) {
       return data.keys().hasAll(['participants', 'updatedAt']) &&
              data.participants is list &&
              data.participants.size() >= 1 &&
-             request.auth.uid in data.participants &&
+             data.participants.size() <= 500 &&
              (!('isGroup' in data) || data.isGroup is bool) &&
-             (!('groupName' in data) || data.groupName is string) &&
-             (!('groupPhoto' in data) || data.groupPhoto is string) &&
-             (!('admins' in data) || data.admins is list) &&
-             (!('typing' in data) || (data.typing is map)) &&
+             (!('groupName' in data) || (data.groupName is string && data.groupName.size() <= 100)) &&
+             (!('groupPhoto' in data) || (data.groupPhoto is string && data.groupPhoto.size() <= 1000000)) &&
+             (!('admins' in data) || (data.admins is list && data.admins.size() <= 100)) &&
+             (!('memberRoles' in data) || data.memberRoles is map) &&
+             (!('isLocked' in data) || data.isLocked is bool) &&
+             (!('typing' in data) || data.typing is map) &&
+             (!('lastMessage' in data) || data.lastMessage is map) &&
              data.updatedAt is timestamp;
     }
 
@@ -71,13 +95,14 @@ service cloud.firestore {
       return data.keys().hasAll(['chatId', 'senderId', 'type', 'createdAt']) &&
              data.chatId is string &&
              (data.senderId == request.auth.uid || data.senderId == 'teleiraq-system') &&
-             (!('text' in data) || (data.text is string && data.text.size() < 5000)) &&
+             (!('text' in data) || (data.text is string && data.text.size() <= 5000)) &&
              data.type in ['text', 'image', 'video', 'file', 'location'] &&
-             (!('fileUrl' in data) || data.fileUrl is string) &&
-             (!('fileName' in data) || data.fileName is string) &&
+             (!('fileUrl' in data) || (data.fileUrl is string && data.fileUrl.size() <= 1000000)) &&
+             (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 200)) &&
              (!('location' in data) || (data.location is map && data.location.latitude is number && data.location.longitude is number)) &&
-             (!('replyTo' in data) || (data.replyTo is map && data.replyTo.id is string && data.replyTo.senderName is string)) &&
-             (!('forwardFrom' in data) || (data.forwardFrom is map && data.forwardFrom.senderName is string && data.forwardFrom.chatId is string)) &&
+             (!('replyTo' in data) || (data.replyTo is map && data.replyTo.id is string && ('text' in data.replyTo || 'senderName' in data.replyTo))) &&
+             (!('reactions' in data) || data.reactions is map) &&
+             (!('read' in data) || data.read is bool) &&
              (!('gameId' in data) || data.gameId is string) &&
              (!('isEdited' in data) || data.isEdited is bool) &&
              data.createdAt is timestamp;
@@ -90,39 +115,56 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if (isOwner(userId) || userId == 'teleiraq-system') && isValidUser(request.resource.data);
-      allow update: if (isOwner(userId) || userId == 'teleiraq-system') && isValidUser(request.resource.data);
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
+      allow update: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && (
+        (incoming().diff(existing()).affectedKeys().hasOnly(['lastSeen'])) ||
+        (incoming().diff(existing()).affectedKeys().hasAny(['displayName', 'photoURL', 'status', 'chatBackground', 'privacy', 'notificationSounds', 'sessionVersion', 'friends', 'blockedUsers', 'magicUnlockedAt', 'animatedColorsUnlockedAt', 'nameColor', 'reels']))
+      );
     }
 
     match /chats/{chatId} {
-      allow read: if isAuthenticated() && request.auth.uid in resource.data.participants;
-      allow create: if isAuthenticated() && isValidChat(request.resource.data);
-      allow update: if isAuthenticated() && request.auth.uid in resource.data.participants && 
-                    (
-                      isValidChat(request.resource.data) || 
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['typing']) ||
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessage', 'updatedAt'])
-                    );
-      allow delete: if isAuthenticated() && request.auth.uid in resource.data.participants;
+      function isParticipant() {
+        return isAuthenticated() && request.auth.uid in resource.data.participants;
+      }
+      function isChatAdmin() {
+        return isParticipant() && request.auth.uid in resource.data.admins;
+      }
+
+      allow read: if isParticipant();
+      allow create: if isValidId(chatId) && isAuthenticated() && request.auth.uid in incoming().participants && isValidChat(incoming());
+      allow update: if isParticipant() && (
+        (incoming().diff(existing()).affectedKeys().hasOnly(['typing'])) ||
+        (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt'])) ||
+        (isChatAdmin() && incoming().diff(existing()).affectedKeys().hasAny(['groupName', 'groupPhoto', 'admins', 'memberRoles', 'isLocked', 'participants']))
+      );
+      allow delete: if isParticipant() && (!('isGroup' in resource.data) || !resource.data.isGroup || (('admins' in resource.data) && request.auth.uid in resource.data.admins));
 
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
-        allow create: if isAuthenticated() && 
-                      request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
-                      isValidMessage(request.resource.data);
+        function getChat() {
+          return get(/databases/$(database)/documents/chats/$(chatId)).data;
+        }
+        function isLocked() {
+          return 'isLocked' in getChat() && getChat().isLocked == true;
+        }
+        function isSenderAdmin() {
+          return ('admins' in getChat()) && request.auth.uid in getChat().admins;
+        }
+
+        allow read: if isAuthenticated() && request.auth.uid in getChat().participants;
+        allow create: if isValidId(messageId) && isAuthenticated() && 
+                      request.auth.uid in getChat().participants &&
+                      (!isLocked() || isSenderAdmin()) &&
+                      isValidMessage(incoming());
         allow update: if isAuthenticated() && 
-                      request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
+                      request.auth.uid in getChat().participants &&
                       (
-                        // Allow marking as read
-                        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) && request.resource.data.read == true) ||
-                        // Allow adding/removing reactions
-                        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])) ||
-                        // Allow editing message (text and isEdited) by the sender
-                        (resource.data.senderId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'isEdited']) && isValidMessage(request.resource.data))
+                        (incoming().diff(existing()).affectedKeys().hasOnly(['read']) && incoming().read == true) ||
+                        (incoming().diff(existing()).affectedKeys().hasOnly(['reactions'])) ||
+                        (existing().senderId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['text', 'isEdited']) && isValidMessage(incoming()))
                       );
         allow delete: if isAuthenticated() && 
-                      (resource.data.senderId == request.auth.uid || 
-                       request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants);
+                      (existing().senderId == request.auth.uid || 
+                       request.auth.uid in getChat().participants);
       }
     }
 

@@ -15,7 +15,9 @@ export interface UserProfile {
   blockedUsers?: string[]; // Array of UIDs this user has blocked
   chatBackground?: string;
   magicUnlockedAt?: any;
+  animatedColorsUnlockedAt?: any;
   sessionVersion?: number;
+  friends?: string[];
 }
 
 export interface Chat {
@@ -31,6 +33,14 @@ export interface Chat {
   groupName?: string;
   groupPhoto?: string;
   admins?: string[]; // Array of UIDs who are admins
+  memberRoles?: { [userId: string]: { 
+    canChangeInfo: boolean; 
+    canKick: boolean; 
+    canLockChat: boolean; 
+    canDeleteMessages: boolean;
+    canAddAdmins: boolean;
+  } };
+  isLocked?: boolean;
   typing?: { [userId: string]: boolean };
   call?: {
     type: 'voice' | 'video';

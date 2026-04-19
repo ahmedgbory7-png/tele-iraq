@@ -10,7 +10,16 @@
         "displayName": { "type": "string" },
         "photoURL": { "type": "string" },
         "status": { "type": "string" },
-        "lastSeen": { "type": "string", "format": "date-time" }
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "chatBackground": { "type": "string" },
+        "privacy": { "type": "object" },
+        "notificationSounds": { "type": "object" },
+        "sessionVersion": { "type": "number" },
+        "friends": { "type": "array", "items": { "type": "string" } },
+        "magicUnlockedAt": { "type": "string", "format": "date-time" },
+        "animatedColorsUnlockedAt": { "type": "string", "format": "date-time" },
+        "nameColor": { "type": "string" },
+        "reels": { "type": "array" }
       },
       "required": ["uid", "phoneNumber"]
     },
@@ -22,7 +31,14 @@
         "id": { "type": "string" },
         "participants": { "type": "array", "items": { "type": "string" } },
         "lastMessage": { "type": "object" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "isGroup": { "type": "boolean" },
+        "groupName": { "type": "string" },
+        "groupPhoto": { "type": "string" },
+        "admins": { "type": "array", "items": { "type": "string" } },
+        "memberRoles": { "type": "object" },
+        "isLocked": { "type": "boolean" },
+        "typing": { "type": "object" }
       },
       "required": ["participants", "updatedAt"]
     },

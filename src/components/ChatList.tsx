@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '@/firebase';
-import { collection, query, where, onSnapshot, orderBy, limit, getDocs, addDoc, serverTimestamp, or, doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, limit, getDocs, addDoc, serverTimestamp, or, doc, getDoc, setDoc, deleteDoc, arrayUnion, arrayRemove, deleteField, updateDoc } from 'firebase/firestore';
 import { Chat, UserProfile } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2, Users, Trash2 } from 'lucide-react';
+import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2, Users, Trash2, Check, X } from 'lucide-react';
 import { auth } from '@/firebase';
 import { format } from 'date-fns';
 import { Language, translations } from '@/lib/i18n';
@@ -40,6 +40,26 @@ export function ChatList() {
   const [groupName, setGroupName] = useState('');
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
   const [contacts, setContacts] = useState<UserProfile[]>([]);
+  const [isUpdatingFriend, setIsUpdatingFriend] = useState<string | null>(null);
+
+  const handleDeleteChatHistory = async (chatId: string) => {
+    if (!window.confirm('هل أنت متأكد من مسح جميع الرسائل مع هذا الصديق؟ لا يمكن التراجع عن هذا الإجراء.')) return;
+    try {
+      const q = query(collection(db, 'chats', chatId, 'messages'));
+      const snap = await getDocs(q);
+      const batch = snap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(batch);
+      
+      await updateDoc(doc(db, 'chats', chatId), {
+        lastMessage: deleteField()
+      });
+      
+      alert('تم مسح الدردشة بنجاح.');
+    } catch (err) {
+      console.error(err);
+      alert('فشل مسح الدردشة.');
+    }
+  };
 
   useEffect(() => {
     if (!currentUser) {
@@ -53,9 +73,20 @@ export function ChatList() {
 
     const fetchContacts = async () => {
       try {
-        const q = query(collection(db, 'users'), limit(100));
-        const snap = await getDocs(q);
-        setContacts(snap.docs.map(d => d.data() as UserProfile).filter(u => u.uid !== currentUser.uid));
+        if (!currentUser?.friends || currentUser.friends.length === 0) {
+          setContacts([]);
+          return;
+        }
+        
+        // Fetch only friends
+        const friendsProfiles: UserProfile[] = [];
+        for (const friendId of currentUser.friends) {
+          const friendDoc = await getDoc(doc(db, 'users', friendId));
+          if (friendDoc.exists()) {
+            friendsProfiles.push(friendDoc.data() as UserProfile);
+          }
+        }
+        setContacts(friendsProfiles.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')));
       } catch (err) {
         console.error("Error fetching contacts:", err);
       }
@@ -118,21 +149,92 @@ export function ChatList() {
       c.phoneNumber?.includes(val)
     );
     
-    if (val.length >= 3) {
-      const q = query(
-        collection(db, 'users'),
-        where('phoneNumber', '>=', val),
-        where('phoneNumber', '<=', val + '\uf8ff'),
-        limit(10)
-      );
+    if (val.length >= 2) {
+      const remoteQueries = [];
+      const normalizedVal = val.replace(/\s/g, ''); // Remove spaces
       
-      try {
-        const snapshot = await getDocs(q);
-        const remoteResults = snapshot.docs
-          .map(doc => doc.data() as UserProfile)
-          .filter(u => u.uid !== currentUser?.uid);
+      // 1. Standard name search
+      remoteQueries.push(getDocs(query(
+        collection(db, 'users'),
+        where('displayName', '>=', val),
+        where('displayName', '<=', val + '\uf8ff'),
+        limit(10)
+      )));
+
+      // Add capitalized search for names (Firestore is case-sensitive)
+      const capitalized = val.charAt(0).toUpperCase() + val.slice(1);
+      if (capitalized !== val) {
+        remoteQueries.push(getDocs(query(
+          collection(db, 'users'),
+          where('displayName', '>=', capitalized),
+          where('displayName', '<=', capitalized + '\uf8ff'),
+          limit(10)
+        )));
+      }
+
+      // 2. Standard phone search as typed
+      remoteQueries.push(getDocs(query(
+        collection(db, 'users'),
+        where('phoneNumber', '>=', normalizedVal),
+        where('phoneNumber', '<=', normalizedVal + '\uf8ff'),
+        limit(10)
+      )));
+
+      // 3. Iraqi and General Phone variations (be aggressive to find users)
+      if (normalizedVal.match(/^\d/) || (normalizedVal.startsWith('+') && normalizedVal.length > 2)) {
+        // Extract significant digits for Iraqi numbers or any number
+        const digitsOnly = normalizedVal.replace(/\D/g, '');
+        let baseNumber = digitsOnly;
         
-        // Merge and deduplicate
+        // If it starts with Iraqi country code, strip it for variations
+        if (baseNumber.startsWith('964')) {
+          baseNumber = baseNumber.substring(3);
+        }
+        // Always strip leading zero for international variations
+        if (baseNumber.startsWith('0')) {
+          baseNumber = baseNumber.substring(1);
+        }
+        
+        if (baseNumber.length >= 7) { // Only try variations for meaningful partials
+          const variations = [
+            '+964' + baseNumber,
+            '964' + baseNumber,
+            '0' + baseNumber,
+            '+' + baseNumber,
+            baseNumber
+          ];
+          
+          // Deduplicate and run
+          const uniqueVariations = Array.from(new Set(variations));
+          uniqueVariations.forEach(fmt => {
+            remoteQueries.push(getDocs(query(
+              collection(db, 'users'),
+              where('phoneNumber', '>=', fmt),
+              where('phoneNumber', '<=', fmt + '\uf8ff'),
+              limit(5)
+            )));
+          });
+        }
+      }
+
+      try {
+        const results = await Promise.allSettled(remoteQueries);
+        const remoteResults: UserProfile[] = [];
+        
+        results.forEach(result => {
+          if (result.status === 'fulfilled') {
+            result.value.docs.forEach((doc: any) => {
+              const data = doc.data() as UserProfile;
+              if (data.uid !== currentUser?.uid && !remoteResults.find(r => r.uid === data.uid)) {
+                remoteResults.push(data);
+              }
+            });
+          } else {
+            console.warn("Search sub-query failed:", result.reason);
+          }
+        });
+        
+        // Merge and deduplicate with local
         const merged = [...localResults];
         remoteResults.forEach(r => {
           if (!merged.find(m => m.uid === r.uid)) merged.push(r);
@@ -147,8 +249,30 @@ export function ChatList() {
     }
   };
 
+  const toggleFriend = async (targetUid: string) => {
+    if (!currentUser) return;
+    setIsUpdatingFriend(targetUid);
+    const isFriend = currentUser.friends?.includes(targetUid);
+    try {
+      await updateDoc(doc(db, 'users', currentUser.uid), {
+        friends: isFriend ? arrayRemove(targetUid) : arrayUnion(targetUid)
+      });
+    } catch (err) {
+      console.error("Error toggling friend:", err);
+    } finally {
+      setIsUpdatingFriend(null);
+    }
+  };
+
   const startChat = async (targetUser: UserProfile) => {
     if (!currentUser) return;
+    
+    // Auto-add friend
+    if (!currentUser.friends?.includes(targetUser.uid)) {
+      await updateDoc(doc(db, 'users', currentUser.uid), {
+        friends: arrayUnion(targetUser.uid)
+      });
+    }
 
     const existingChat = (chats || []).find(c => c.participants.includes(targetUser.uid));
     if (existingChat) {
@@ -255,9 +379,6 @@ export function ChatList() {
         nameColor: '#8b5cf6',
         photoURL: 'https://cdn-icons-png.flaticon.com/512/4712/4712035.png'
       };
-
-      // Ensure system user exists in Firestore
-      await setDoc(doc(db, 'users', systemUser.uid), systemUser, { merge: true });
       
       // Check if private chat already exists in DB directly to be sure
       const q = query(
@@ -320,13 +441,28 @@ export function ChatList() {
         
         {isSearching && (
           <div className="px-4 py-2 border-b animate-in slide-in-from-top duration-200">
-            <Input
-              autoFocus
-              placeholder="البحث في جهات الاتصال..."
-              className="bg-muted/50 border-none rounded-xl h-10 focus-visible:ring-primary/30"
-              value={searchQuery}
-              onChange={(e) => handleSearch(e.target.value)}
-            />
+            <div className="relative">
+              <Input
+                autoFocus
+                placeholder="البحث في جهات الاتصال..."
+                className="bg-muted/50 border-none rounded-xl h-10 pr-10 focus-visible:ring-primary/30"
+                value={searchQuery}
+                onChange={(e) => handleSearch(e.target.value)}
+              />
+              <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                <Search className="h-4 w-4 text-muted-foreground" />
+              </div>
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute inset-y-0 left-0 h-10 w-10 rounded-xl hover:bg-transparent"
+                  onClick={() => handleSearch('')}
+                >
+                  <X className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              )}
+            </div>
           </div>
         )}
 
@@ -382,13 +518,17 @@ export function ChatList() {
                           setViewingProfileId(user.uid);
                         }}
                       >
-                        <AvatarImage src={user.photoURL} />
+                        <AvatarImage src={user.photoURL || undefined} />
                         <AvatarFallback style={{ backgroundColor: user.nameColor || '#8b5cf6' }} className="text-white font-bold text-sm">
                           {user.displayName?.slice(0, 2).toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1 min-w-0" onClick={() => startChat(user)}>
-                        <p className={`font-bold text-sm truncate ${user.nameColor === 'magic' ? 'magic-color-text' : ''}`} style={{ color: user.nameColor === 'magic' ? undefined : (user.nameColor || 'inherit') }}>
+                        <p className={`font-bold text-sm truncate ${
+                          user.nameColor === 'magic' ? 'magic-color-text' : 
+                          user.nameColor === 'animated-green' ? 'animated-green-text' :
+                          user.nameColor === 'animated-red' ? 'animated-red-text' : ''
+                        }`} style={{ color: ['magic', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || 'inherit') }}>
                           {user.displayName}
                         </p>
                         <p className="text-[10px] text-muted-foreground truncate">{user.status || 'متوفر'}</p>
@@ -419,7 +559,7 @@ export function ChatList() {
           onClick={() => setShowProfile(true)}
         >
           <Avatar className="h-10 w-10 border-2 border-primary/20 shadow-sm">
-            <AvatarImage src={currentUser?.photoURL} />
+            <AvatarImage src={currentUser?.photoURL || undefined} />
             <AvatarFallback className="text-white font-bold" style={{ backgroundColor: currentUser?.nameColor || '#8b5cf6' }}>
               {currentUser?.displayName?.slice(0, 2).toUpperCase()}
             </AvatarFallback>
@@ -442,13 +582,28 @@ export function ChatList() {
       {/* Search */}
       {isSearching && (
         <div className="px-4 py-2 border-b animate-in slide-in-from-top duration-200">
-          <Input
-            autoFocus
-            placeholder={t.searchPlaceholder}
-            className="bg-muted/50 border-none rounded-xl h-10 focus-visible:ring-primary/30"
-            value={searchQuery}
-            onChange={(e) => handleSearch(e.target.value)}
-          />
+          <div className="relative">
+            <Input
+              autoFocus
+              placeholder={t.searchPlaceholder}
+              className="bg-muted/50 border-none rounded-xl h-10 pr-10 focus-visible:ring-primary/30"
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+            />
+            <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+              <Search className="h-4 w-4 text-muted-foreground" />
+            </div>
+            {searchQuery && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute inset-y-0 left-0 h-10 w-10 rounded-xl hover:bg-transparent"
+                onClick={() => handleSearch('')}
+              >
+                <X className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
@@ -473,7 +628,7 @@ export function ChatList() {
                         setViewingProfileId(user.uid);
                       }}
                     >
-                      <AvatarImage src={user.photoURL} />
+                      <AvatarImage src={user.photoURL || undefined} />
                       <AvatarFallback 
                         className={`text-white font-bold bg-muted-foreground/20 text-muted-foreground`} 
                       >
@@ -485,13 +640,37 @@ export function ChatList() {
                       onClick={() => startChat(user)}
                     >
                       <p 
-                        className={`font-semibold text-sm truncate ${user.nameColor === 'magic' ? 'magic-color-text' : ''}`} 
-                        style={{ color: user.nameColor === 'magic' ? undefined : (user.nameColor || '#141414') }}
+                        className={`font-bold text-sm truncate ${
+                          user.nameColor === 'magic' ? 'magic-color-text' : 
+                          user.nameColor === 'animated-green' ? 'animated-green-text' :
+                          user.nameColor === 'animated-red' ? 'animated-red-text' : ''
+                        }`} 
+                        style={{ color: ['magic', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || '#141414') }}
                       >
                         {user.displayName}
                       </p>
-                      <p className="text-xs text-muted-foreground truncate">{user.phoneNumber}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{user.phoneNumber}</p>
                     </div>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="rounded-full shrink-0" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFriend(user.uid);
+                      }}
+                      disabled={isUpdatingFriend === user.uid}
+                    >
+                      {isUpdatingFriend === user.uid ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                      ) : (
+                        currentUser?.friends?.includes(user.uid) ? (
+                          <Check className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <UserPlus className="w-4 h-4 text-primary" />
+                        )
+                      )}
+                    </Button>
                   </div>
                 ))
               ) : (
@@ -521,8 +700,12 @@ export function ChatList() {
                     dragElastic={0.1}
                     onDragEnd={(e, info) => {
                       if (info.offset.x < -80) {
-                        deleteChat(chat.id);
+                        handleDeleteChatHistory(chat.id);
                       }
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      handleDeleteChatHistory(chat.id);
                     }}
                     role="button"
                     tabIndex={0}
@@ -542,7 +725,7 @@ export function ChatList() {
                         }
                       }}
                     >
-                      <AvatarImage src={photoURL} />
+                      <AvatarImage src={photoURL || undefined} />
                       <AvatarFallback 
                         className={`text-white font-bold bg-muted-foreground/20 text-muted-foreground`} 
                       >
@@ -552,8 +735,14 @@ export function ChatList() {
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-baseline">
                         <p 
-                          className={`font-bold text-sm truncate ${nameColor === 'magic' ? (activeChatId === chat.id ? '' : 'magic-color-text') : ''}`} 
-                          style={{ color: activeChatId === chat.id ? 'white' : (nameColor === 'magic' ? undefined : (nameColor || '#141414')) }}
+                          className={`font-bold text-sm truncate ${
+                            activeChatId === chat.id ? '' : (
+                              nameColor === 'magic' ? 'magic-color-text' : 
+                              nameColor === 'animated-green' ? 'animated-green-text' :
+                              nameColor === 'animated-red' ? 'animated-red-text' : ''
+                            )
+                          }`} 
+                          style={{ color: activeChatId === chat.id ? 'white' : (['magic', 'animated-green', 'animated-red'].includes(nameColor) ? undefined : (nameColor || '#141414')) }}
                         >
                           {displayName}
                         </p>
@@ -604,7 +793,7 @@ export function ChatList() {
                   }}>
                     <Checkbox checked={selectedContacts.includes(contact.uid)} />
                     <Avatar className="h-8 w-8">
-                      <AvatarImage src={contact.photoURL} />
+                      <AvatarImage src={contact.photoURL || undefined} />
                       <AvatarFallback style={{ backgroundColor: contact.nameColor }}>{contact.displayName?.slice(0,2)}</AvatarFallback>
                     </Avatar>
                     <span className="text-sm">{contact.displayName}</span>

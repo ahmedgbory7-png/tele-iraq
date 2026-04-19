@@ -22,6 +22,7 @@ import { motion, AnimatePresence } from 'motion/react';
 
 import { useStore } from './store/useStore';
 import { NOTIFICATION_SOUNDS } from '@/constants';
+import { requestNotificationPermission, showSystemNotification } from '@/lib/notifications';
 
 export default function App() {
   const {
@@ -95,6 +96,13 @@ export default function App() {
                 text: chatData.lastMessage.text
               });
 
+              // Also show system notification
+              showSystemNotification(senderName, {
+                body: chatData.lastMessage.text,
+                tag: chatId, // Replace older notifications from same chat
+                renotify: true
+              } as any);
+
               // Clear notification after 5 seconds
               setTimeout(() => {
                 setNotification(null);
@@ -152,6 +160,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dir = language === 'English' ? 'ltr' : 'rtl';
+    requestNotificationPermission();
   }, [language]);
 
   useEffect(() => {
@@ -182,6 +191,15 @@ export default function App() {
         profileUnsubscribe = onSnapshot(doc(db, 'users', firebaseUser.uid), async (snapshot) => {
           if (snapshot.exists()) {
             const data = snapshot.data() as UserProfile;
+            
+            // Data migration for old users
+            if (!data.friends || !data.blockedUsers) {
+              await updateDoc(doc(db, 'users', firebaseUser.uid), {
+                friends: data.friends || [],
+                blockedUsers: data.blockedUsers || []
+              });
+              return; // Let the next snapshot trigger
+            }
             const currentLocal = parseInt(localStorage.getItem(`session_${firebaseUser.uid}`) || '0');
             
             // Handle cross-device session termination
@@ -205,7 +223,9 @@ export default function App() {
               displayName: 'مستخدم تليعراق',
               status: 'أنا أستخدم تليعراق!',
               lastSeen: serverTimestamp(),
-              nameColor: '#8b5cf6'
+              nameColor: '#8b5cf6',
+              friends: [],
+              blockedUsers: []
             };
             await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
             setProfile(newProfile);

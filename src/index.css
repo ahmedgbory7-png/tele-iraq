@@ -173,6 +173,10 @@
   background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
 }
 
+.green-gradient {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+}
+
 /* Magic RGB Color Effect */
 .magic-color-bg {
   background: linear-gradient(
@@ -209,6 +213,46 @@
   -webkit-text-fill-color: transparent;
   animation: magic-bg-anim 8s ease infinite;
   font-weight: bold;
+}
+
+.animated-green-text {
+  background: linear-gradient(
+    270deg,
+    #ccff00,
+    #00ff00,
+    #ccff00
+  );
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 4s ease infinite;
+  font-weight: bold;
+}
+
+.animated-red-text {
+  background: linear-gradient(
+    270deg,
+    #ff0000,
+    #aa0000,
+    #ff0000
+  );
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 4s ease infinite;
+  font-weight: bold;
+}
+
+.animated-green-bg {
+  background: linear-gradient(270deg, #ccff00, #00ff00, #ccff00);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 4s ease infinite;
+}
+
+.animated-red-bg {
+  background: linear-gradient(270deg, #ff0000, #aa0000, #ff0000);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 4s ease infinite;
 }
 
 @keyframes magic-bg-anim {

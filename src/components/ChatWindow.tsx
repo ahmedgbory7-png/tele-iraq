@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/firebase';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc, arrayUnion, arrayRemove, deleteField, getDocs } from 'firebase/firestore';
 import { Message, UserProfile, Chat } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, MoreVertical, Paperclip, Smile, ArrowRight, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User } from 'lucide-react';
+import { Send, MoreVertical, Paperclip, Smile, ArrowRight, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
@@ -16,6 +16,8 @@ import { DominoGame } from './DominoGame';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
 import { useStore } from '@/store/useStore';
+
+import { Checkbox } from '@/components/ui/checkbox';
 
 export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () => void }) {
   const { profile: currentUser, setViewingProfileId, setShowProfile } = useStore();
@@ -32,9 +34,17 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   const [activeGameId, setActiveGameId] = useState<string | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [showGroupSettings, setShowGroupSettings] = useState(false);
+  const [showManageAdmin, setShowManageAdmin] = useState<{ uid: string; displayName: string } | null>(null);
+  const [adminPerms, setAdminPerms] = useState({
+    canChangeInfo: true,
+    canKick: true,
+    canLockChat: false,
+    canDeleteMessages: false,
+    canAddAdmins: false
+  });
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [showGroupSettings, setShowGroupSettings] = useState(false);
   
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -523,48 +533,81 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     }
   };
 
-  const addAdmin = async (targetUid: string) => {
-    if (!currentUser || !chatData || !chatData.isGroup) return;
-    const isMeAdminEnabled = chatData.admins?.includes(currentUser.uid);
-    if (!isMeAdminEnabled) return;
+  const isMeAdmin = chatData?.admins?.includes(currentUser?.uid || '');
+  const isOwner = chatData?.participants?.[0] === currentUser?.uid;
+  const myPermissions = chatData?.memberRoles?.[currentUser?.uid || ''] || {
+    canChangeInfo: isMeAdmin || false,
+    canKick: isMeAdmin || false,
+    canLockChat: isMeAdmin || false,
+    canDeleteMessages: isMeAdmin || false,
+    canAddAdmins: isOwner || false
+  };
 
+  const addAdmin = async (uid: string, perms?: any) => {
+    if (!chatId || !isOwner) return;
     try {
       await updateDoc(doc(db, 'chats', chatId), {
-        admins: arrayUnion(targetUid)
+        admins: arrayUnion(uid),
+        [`memberRoles.${uid}`]: perms || {
+          canChangeInfo: true,
+          canKick: true,
+          canLockChat: false,
+          canDeleteMessages: false,
+          canAddAdmins: false
+        }
       });
     } catch (err) {
-      console.error("Error adding admin:", err);
+      console.error(err);
     }
   };
 
-  const removeAdmin = async (targetUid: string) => {
-    if (!currentUser || !chatData || !chatData.isGroup) return;
-    const isMeAdminEnabled = chatData.admins?.includes(currentUser.uid);
-    if (!isMeAdminEnabled) return;
-
+  const removeAdmin = async (uid: string) => {
+    if (!chatId || !isOwner) return;
     try {
       await updateDoc(doc(db, 'chats', chatId), {
-        admins: arrayRemove(targetUid)
+        admins: arrayRemove(uid),
+        [`memberRoles.${uid}`]: deleteField()
       });
     } catch (err) {
-      console.error("Error removing admin:", err);
+      console.error(err);
     }
   };
 
-  const removeMember = async (targetUid: string) => {
-    if (!currentUser || !chatData || !chatData.isGroup) return;
-    const isMeAdminEnabled = chatData.admins?.includes(currentUser.uid);
-    if (!isMeAdminEnabled) return;
-
-    if (!window.confirm('هل أنت متأكد من إزالة هذا العضو من المجموعة؟')) return;
-
+  const toggleChatLock = async () => {
+    if (!chatId || !myPermissions.canLockChat) return;
     try {
       await updateDoc(doc(db, 'chats', chatId), {
-        participants: arrayRemove(targetUid),
-        admins: arrayRemove(targetUid)
+        isLocked: !chatData?.isLocked
       });
     } catch (err) {
-      console.error("Error removing member:", err);
+      console.error(err);
+    }
+  };
+
+  const clearChatHistory = async () => {
+    if (!chatId || !myPermissions.canDeleteMessages) return;
+    if (!window.confirm('هل أنت متأكد من مسح جميع الرسائل في هذه المجموعة؟')) return;
+    
+    try {
+      const q = query(collection(db, 'messages'), where('chatId', '==', chatId));
+      const snap = await getDocs(q);
+      const batch = snap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(batch);
+      alert('تم مسح جميع الرسائل.');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const removeMember = async (uid: string) => {
+    if (!chatId || !myPermissions.canKick) return;
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        participants: arrayRemove(uid),
+        admins: arrayRemove(uid)
+      });
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -593,7 +636,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     return `آخر ظهور بتاريخ ${format(date, 'yyyy/MM/dd')}`;
   };
 
-  const isMeAdmin = chatData?.isGroup && chatData.admins?.includes(currentUser?.uid || '');
   const iBlockedOther = !chatData?.isGroup && currentUser?.blockedUsers?.includes(otherProfile?.uid || '');
   const chatBackground = currentUser?.chatBackground;
   const isPattern = chatBackground?.includes('transparenttextures.com');
@@ -629,7 +671,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             }}
           >
             <Avatar className="h-10 w-10 border-2 border-primary/10">
-              <AvatarImage src={chatData?.isGroup ? chatData.groupPhoto : otherProfile?.photoURL} />
+            <AvatarImage src={chatData?.isGroup ? (chatData.groupPhoto || undefined) : (otherProfile?.photoURL || undefined)} />
               <AvatarFallback 
                 className="text-white font-bold bg-muted-foreground/20 text-muted-foreground"
               >
@@ -782,7 +824,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                             if (senderProfile) setViewingProfileId(senderProfile.uid);
                           }}
                         >
-                          <AvatarImage src={senderProfile?.photoURL} />
+                          <AvatarImage src={senderProfile?.photoURL || undefined} />
                           <AvatarFallback 
                             className="text-white text-[10px] font-bold bg-muted-foreground/20 text-muted-foreground"
                           >
@@ -793,7 +835,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                     </div>
                   )}
                   <div 
-                    className="relative flex flex-col items-end max-w-[75%]"
+                    className="relative flex flex-col items-start max-w-[75%]"
                     onClick={() => handleMessageClick(msg)}
                   >
                     <div 
@@ -838,7 +880,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                       {msg.type === 'text' && <p className="text-[15px] leading-snug whitespace-pre-wrap mb-1">{msg.text}</p>}
                       {msg.type === 'image' && (
                         <div className="rounded-lg overflow-hidden mb-1">
-                          <img src={msg.fileUrl} alt="Sent" className="max-w-full h-auto max-h-64 object-cover" referrerPolicy="no-referrer" />
+                          <img src={msg.fileUrl || undefined} alt="Sent" className="max-w-full h-auto max-h-64 object-cover" referrerPolicy="no-referrer" />
                         </div>
                       )}
                       {msg.type === 'file' && (
@@ -884,7 +926,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                           </Button>
                         </div>
                       )}
-                      <div className={`text-[10px] flex items-center justify-end gap-1 ${isMe ? 'text-white/80' : 'text-muted-foreground'}`}>
+                      <div className={`text-[10px] flex items-center justify-start gap-1 ${isMe ? 'text-white/80' : 'text-muted-foreground'}`}>
                         {msg.isEdited && <span className="opacity-60 italic ml-1">معدلة</span>}
                         <span>{msg.createdAt?.toDate ? format(msg.createdAt.toDate(), 'hh:mm a', { locale: ar }) : '...'}</span>
                         {isMe && (
@@ -954,7 +996,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
 
                     {/* Reactions Display */}
                     {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                      <div className={`flex flex-wrap gap-1 mt-1 ${isMe ? 'justify-start' : 'justify-end'}`}>
+                      <div className={`flex flex-wrap gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
                         {Object.entries(msg.reactions).map(([emoji, userIds]) => {
                           const ids = userIds as string[];
                           return (
@@ -983,7 +1025,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             <div className="flex justify-end items-end gap-2">
               <div className="w-8 shrink-0">
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={participants[typingUsers[0]]?.photoURL || otherProfile?.photoURL} />
+                  <AvatarImage src={participants[typingUsers[0]]?.photoURL || otherProfile?.photoURL || undefined} />
                   <AvatarFallback className="text-white text-[10px]" style={{ backgroundColor: participants[typingUsers[0]]?.nameColor || otherProfile?.nameColor }}>
                     {(participants[typingUsers[0]]?.displayName || otherProfile?.displayName)?.slice(0, 2).toUpperCase()}
                   </AvatarFallback>
@@ -1009,7 +1051,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             <div className="flex justify-end items-end gap-2">
               <div className="w-8 shrink-0">
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={otherProfile?.photoURL} />
+                  <AvatarImage src={otherProfile?.photoURL || undefined} />
                   <AvatarFallback className="text-white text-[10px]" style={{ backgroundColor: otherProfile?.nameColor }}>
                     {otherProfile?.displayName?.slice(0, 2).toUpperCase()}
                   </AvatarFallback>
@@ -1030,7 +1072,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     </div>
 
       {/* Input */}
-      <div className="p-4 bg-card border-t relative">
+      <div className="p-4 pb-14 bg-card border-t relative safe-bottom">
         <AnimatePresence>
           {(replyingTo || editingMessage) && (
             <motion.div 
@@ -1117,7 +1159,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             type="submit" 
             size="icon" 
             className={`rounded-full h-11 w-11 shrink-0 transition-all ios-touch ${newMessage.trim() ? 'purple-gradient scale-100' : 'bg-muted text-muted-foreground scale-90'}`}
-            disabled={!newMessage.trim() || isTyping}
+            disabled={!newMessage.trim() || isTyping || (chatData?.isLocked && !isMeAdmin)}
           >
             <Send className="h-5 w-5 rotate-180" />
           </Button>
@@ -1172,7 +1214,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                           setShowGroupSettings(false);
                         }}
                       >
-                        <AvatarImage src={p?.photoURL} />
+                        <AvatarImage src={p?.photoURL || undefined} />
                         <AvatarFallback style={{ backgroundColor: p?.nameColor || '#8b5cf6' }} className="text-white text-[10px]">
                           {p?.displayName?.slice(0, 2)}
                         </AvatarFallback>
@@ -1210,7 +1252,16 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                                 variant="ghost" 
                                 size="sm" 
                                 className="h-8 text-[10px] gap-1 text-primary hover:bg-primary/10"
-                                onClick={() => addAdmin(uid)}
+                                onClick={() => {
+                                  setShowManageAdmin({ uid, displayName: p?.displayName || 'مستخدم' });
+                                  setAdminPerms({
+                                    canChangeInfo: true,
+                                    canKick: true,
+                                    canLockChat: false,
+                                    canDeleteMessages: false,
+                                    canAddAdmins: false
+                                  });
+                                }}
                               >
                                 <UserPlus className="w-3 h-3" />
                                 تعيين مشرف
@@ -1243,8 +1294,77 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                 <LogOut className="w-4 h-4" />
                 مغادرة هذه المجموعة
               </Button>
+              
+              {myPermissions.canLockChat && (
+                <Button 
+                  variant="outline" 
+                  className="w-full justify-start text-xs rounded-xl h-10 gap-2"
+                  onClick={toggleChatLock}
+                >
+                  {chatData?.isLocked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                  {chatData?.isLocked ? 'إلغاء قفل الدردشة' : 'قفل الدردشة للأعضاء'}
+                </Button>
+              )}
+
+              {myPermissions.canDeleteMessages && (
+                <Button 
+                  variant="outline" 
+                  className="w-full justify-start text-xs rounded-xl h-10 gap-2 text-orange-600 border-orange-200"
+                  onClick={clearChatHistory}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  مسح جميع الرسائل
+                </Button>
+              )}
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Admin Permissions Dialog */}
+      <Dialog open={!!showManageAdmin} onOpenChange={() => setShowManageAdmin(null)}>
+        <DialogContent className="max-w-sm rounded-2xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-right">صلاحيات المشرف: {showManageAdmin?.displayName}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="flex items-center justify-between p-2 rounded-xl bg-muted/30">
+              <span className="text-sm">تغيير معلومات المجموعة</span>
+              <Checkbox checked={adminPerms.canChangeInfo} onCheckedChange={(v) => setAdminPerms(p => ({ ...p, canChangeInfo: !!v }))} />
+            </div>
+            <div className="flex items-center justify-between p-2 rounded-xl bg-muted/30">
+              <span className="text-sm">طرد الأعضاء</span>
+              <Checkbox checked={adminPerms.canKick} onCheckedChange={(v) => setAdminPerms(p => ({ ...p, canKick: !!v }))} />
+            </div>
+            <div className="flex items-center justify-between p-2 rounded-xl bg-muted/30">
+              <span className="text-sm">قفل الدردشة</span>
+              <Checkbox checked={adminPerms.canLockChat} onCheckedChange={(v) => setAdminPerms(p => ({ ...p, canLockChat: !!v }))} />
+            </div>
+            <div className="flex items-center justify-between p-2 rounded-xl bg-muted/30">
+              <span className="text-sm">حذف رسائل الجميع</span>
+              <Checkbox checked={adminPerms.canDeleteMessages} onCheckedChange={(v) => setAdminPerms(p => ({ ...p, canDeleteMessages: !!v }))} />
+            </div>
+            {isOwner && (
+              <div className="flex items-center justify-between p-2 rounded-xl bg-muted/30">
+                <span className="text-sm text-primary font-bold">إضافة مشرفين آخرين</span>
+                <Checkbox checked={adminPerms.canAddAdmins} onCheckedChange={(v) => setAdminPerms(p => ({ ...p, canAddAdmins: !!v }))} />
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowManageAdmin(null)} className="flex-1 rounded-xl">إلغاء</Button>
+            <Button 
+              className="flex-1 rounded-xl purple-gradient" 
+              onClick={() => {
+                if (showManageAdmin) {
+                  addAdmin(showManageAdmin.uid, adminPerms);
+                  setShowManageAdmin(null);
+                }
+              }}
+            >
+              حفظ
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

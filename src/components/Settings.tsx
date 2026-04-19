@@ -30,6 +30,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { Language, translations } from '@/lib/i18n';
 import { useStore } from '@/store/useStore';
 import { NOTIFICATION_SOUNDS, CHAT_BACKGROUND_PATTERNS } from '@/constants';
+import { requestNotificationPermission, showSystemNotification } from '@/lib/notifications';
 import {
   Dialog,
   DialogContent,
@@ -59,8 +60,7 @@ export function Settings() {
     setCurrentTab('chats');
   };
   const onOpenProfile = () => {
-    setShowSettings(false);
-    setShowProfile(true);
+    setCurrentTab('profile');
   };
   const t = translations[language];
   const [view, setView] = useState<SettingsView>('main');
@@ -70,6 +70,7 @@ export function Settings() {
   const [notifications, setNotifications] = useState(() => JSON.parse(localStorage.getItem('app-notifications') || '{"private":true,"groups":true,"calls":true,"privateSound":"default","groupSound":"default"}'));
   const [dataUsage, setDataUsage] = useState(() => JSON.parse(localStorage.getItem('app-data-usage') || '{"autoDownload":true,"lowDataMode":false}'));
   const [isTerminating, setIsTerminating] = useState(false);
+  const [permissionStatus, setPermissionStatus] = useState<NotificationPermission>(() => (typeof Notification !== 'undefined' ? Notification.permission : 'default'));
   
   const [privacySettings, setPrivacySettings] = useState({
     phoneNumber: profile.privacy?.phoneNumber || t.everyone,
@@ -349,6 +350,57 @@ export function Settings() {
   const renderNotifications = () => (
     <SubSettingsView title={t.notifications} onBack={() => setView('main')} language={language}>
       <div className="space-y-6">
+        <div className="bg-card rounded-2xl border overflow-hidden p-4 space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+              <Bell className="h-6 w-6" />
+            </div>
+            <div className="flex-1">
+              <p className="font-bold text-sm">إشعارات النظام</p>
+              <p className="text-xs text-muted-foreground">تلقي الإشعارات حتى عندما يكون التطبيق في الخلفية</p>
+            </div>
+          </div>
+          
+          <Button 
+            variant="ghost"
+            className={`w-full rounded-xl h-12 shadow-lg transition-all text-white border-0 ${permissionStatus === 'granted' ? 'green-gradient' : 'purple-gradient'}`}
+            onClick={async () => {
+              const granted = await requestNotificationPermission();
+              setPermissionStatus(granted ? 'granted' : 'denied');
+              if (granted) {
+                alert('تم تفعيل إشعارات النظام بنجاح! 🔔');
+                // Auto-test
+                setTimeout(() => {
+                  showSystemNotification('تليعراق', { body: 'هذا إشعار تجريبي للتأكد من عمل النظام ✅' });
+                }, 2000);
+              }
+              else alert('يرجى تفعيل الإشعارات من إعدادات المتصفح.');
+            }}
+          >
+            {permissionStatus === 'granted' ? 'الإشعارات مفعلة ✅' : 'تفعيل إشعارات النظام'}
+          </Button>
+
+          {permissionStatus === 'granted' && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full rounded-xl text-xs"
+              onClick={() => {
+                showSystemNotification('تجربة الإشعارات', { 
+                  body: 'إذا رأيت هذا، فهذا يعني أن الإشعارات تعمل بشكل صحيح! ✨',
+                  icon: '/pwa-192x192.png'
+                });
+                alert('سيتلقى جهازك إشعاراً الآن إذا كان التطبيق في الخلفية.');
+              }}
+            >
+              إرسال إشعار تجريبي
+            </Button>
+          )}
+          <p className="text-[10px] text-center text-muted-foreground px-4">
+            هذا الخيار يسمح لك بتلقي تنبيهات من نظام تشغيل جهازك فور وصول رسالة جديدة.
+          </p>
+        </div>
+
         <div className="bg-card rounded-2xl border overflow-hidden">
           <div className="p-4 bg-muted/30 border-b">
             <h3 className="text-xs font-bold text-primary uppercase tracking-wider">إشعارات الرسائل</h3>
