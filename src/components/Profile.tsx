@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '@/firebase';
-import { doc, updateDoc, getDoc, query, collection, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, query, collection, where, getDocs, addDoc, serverTimestamp, orderBy, onSnapshot, deleteDoc, increment } from 'firebase/firestore';
 import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -92,6 +92,24 @@ export function Profile() {
   const [reelUrl, setReelUrl] = useState('');
   const [uploadingReel, setUploadingReel] = useState(false);
   const [isMagicDialogOpen, setIsMagicDialogOpen] = useState(false);
+
+  const [userReels, setUserReels] = useState<any[]>([]);
+
+  useEffect(() => {
+    const uid = viewingProfileId || profile?.uid;
+    if (!uid) return;
+
+    const q = query(
+      collection(db, 'users', uid, 'userReels'),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setUserReels(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => unsubscribe();
+  }, [viewingProfileId, profile?.uid]);
 
   const formatLastSeen = (p: UserProfile | null) => {
     if (!p) return 'متصل منذ وقت طويل';
@@ -190,6 +208,10 @@ export function Profile() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 800 * 1024) {
+        alert('حجم الصورة كبير جداً. يرجى اختيار صورة أقل من 800 كيلوبايت.');
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         const img = new Image();
@@ -198,7 +220,7 @@ export function Profile() {
           const canvas = document.createElement('canvas');
           let width = img.width;
           let height = img.height;
-          const maxDimension = 600;
+          const maxDimension = 500; // Reduced from 600
 
           if (width > height) {
             if (width > maxDimension) {
@@ -216,27 +238,82 @@ export function Profile() {
           canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, width, height);
-          setPhotoURL(canvas.toDataURL('image/jpeg', 0.8));
+          setPhotoURL(canvas.toDataURL('image/jpeg', 0.6)); // Reduced quality
         };
       };
       reader.readAsDataURL(file);
     }
   };
 
+  const handleReelFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Limit base64 storage to ~800KB final string size
+    if (file.size > 800 * 1024) {
+      alert('حجم الملف كبير جداً. يرجى اختيار فيديو أو صورة أقل من 800 كيلوبايت لضمان النشر بنجاح.');
+      return;
+    }
+
+    setUploadingReel(true);
+    const isVideo = file.type.startsWith('video/');
+    const reader = new FileReader();
+
+    reader.onload = async (event) => {
+      const result = event.target?.result as string;
+      
+      if (!isVideo) {
+        // Resize image
+        const img = new Image();
+        img.src = result;
+        img.onload = async () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          const maxDim = 800; // Reduced from 1080
+          if (width > height) {
+            if (width > maxDim) { height *= maxDim / width; width = maxDim; }
+          } else {
+            if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          setReelUrl(canvas.toDataURL('image/jpeg', 0.5)); // Reduced quality
+        };
+      } else {
+        setReelUrl(result);
+      }
+      setUploadingReel(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleAddReel = async () => {
-    if (!reelUrl.trim()) return;
+    if (!reelUrl) return;
+    
+    // Safety check for Firestore document size limit (1MB)
+    if (reelUrl.length > 900 * 1024) {
+      alert('الملف كبير جداً ليتم حفظه في قاعدة البيانات. يرجى اختيار ملف أصغر.');
+      setUploadingReel(false);
+      return;
+    }
+
     setUploadingReel(true);
     try {
-      const newReel = {
-        id: Math.random().toString(36).substr(2, 9),
+      const reelData = {
         url: reelUrl.trim(),
         caption: reelCaption.trim(),
-        createdAt: new Date().toISOString()
+        createdAt: serverTimestamp(),
+        userId: profile.uid
       };
       
-      const updatedReels = [...(profile.reels || []), newReel];
+      await addDoc(collection(db, 'users', profile.uid, 'userReels'), reelData);
+      
       await updateDoc(doc(db, 'users', profile.uid), {
-        reels: updatedReels
+        reelsCount: increment(1),
+        lastReelAt: serverTimestamp()
       });
       
       setReelUrl('');
@@ -251,14 +328,16 @@ export function Profile() {
   };
 
   const handleDeleteReel = async (reelId: string) => {
+    if (!profile?.uid) return;
     if (!window.confirm('هل أنت متأكد من حذف هذا الريلز؟')) return;
     try {
-      const updatedReels = (profile.reels || []).filter(r => r.id !== reelId);
+      await deleteDoc(doc(db, 'users', profile.uid, 'userReels', reelId));
       await updateDoc(doc(db, 'users', profile.uid), {
-        reels: updatedReels
+        reelsCount: increment(-1)
       });
     } catch (err) {
       console.error(err);
+      alert('فشل حذف الريلز');
     }
   };
 
@@ -298,7 +377,7 @@ export function Profile() {
                 className="rounded-full hover:bg-white/10 bg-white/20 backdrop-blur-md ios-touch"
                 onClick={async () => {
                   // Find or create chat logic
-                  if(!profile || !currentProfile) return;
+                  if(!profile?.uid || !currentProfile?.uid) return;
                   const targetUid = currentProfile.uid;
                   // Simplified: we'll just try to open or let user find them in list
                   // Actually let's just trigger active chat if we can
@@ -513,14 +592,22 @@ export function Profile() {
               )}
 
               <div className="grid grid-cols-2 gap-3 pb-20">
-                {currentProfile.reels && currentProfile.reels.length > 0 ? (
-                  currentProfile.reels.map((reel) => (
+                {userReels && userReels.length > 0 ? (
+                  userReels.map((reel) => (
                     <div key={reel.id} className="relative aspect-[9/16] rounded-2xl overflow-hidden bg-muted shadow-lg group">
-                      <video 
-                        src={reel.url} 
-                        className="w-full h-full object-cover"
-                        controls={false}
-                      />
+                      {reel.url.startsWith('data:video') ? (
+                        <video 
+                          src={reel.url} 
+                          className="w-full h-full object-cover"
+                          controls={false}
+                        />
+                      ) : (
+                        <img 
+                          src={reel.url} 
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      )}
                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex flex-col justify-end p-3">
                         {reel.caption && <p className="text-white text-[10px] line-clamp-2 mb-1">{reel.caption}</p>}
                         <div className="flex justify-between items-center gap-2">
@@ -556,20 +643,42 @@ export function Profile() {
       </div>
 
       <Dialog open={isReelsOpen} onOpenChange={setIsReelsOpen}>
-        <DialogContent className="sm:max-w-md" dir="rtl">
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto" dir="rtl">
           <DialogHeader>
             <DialogTitle>إضافة حالة ريلز 🎬</DialogTitle>
           </DialogHeader>
           <div className="py-4 space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-semibold">رابط الفيديو</label>
-              <Input 
-                placeholder="أدخل رابط الفيديو (MP4)..." 
-                value={reelUrl}
-                onChange={(e) => setReelUrl(e.target.value)}
-                className="h-12 rounded-xl"
-              />
-              <p className="text-[10px] text-muted-foreground">ملاحظة: يفضل استخدام روابط فيديو مباشرة MP4</p>
+              <label className="text-sm font-semibold">اختر من الاستوديو</label>
+              <div 
+                className="w-full aspect-[9/16] max-h-[40vh] bg-muted rounded-2xl border-2 border-dashed border-primary/20 flex flex-col items-center justify-center gap-4 cursor-pointer overflow-hidden relative mx-auto"
+                onClick={() => document.getElementById('reel-video-upload')?.click()}
+              >
+                {reelUrl ? (
+                  reelUrl.startsWith('data:video') ? (
+                    <video src={reelUrl} className="w-full h-full object-cover" />
+                  ) : (
+                    <img src={reelUrl} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  )
+                ) : (
+                  <>
+                    <Play className="w-12 h-12 text-primary/40" />
+                    <p className="text-xs text-muted-foreground">اضغط لاختيار فيديو أو صورة</p>
+                  </>
+                )}
+                <input 
+                  id="reel-video-upload"
+                  type="file" 
+                  className="hidden" 
+                  accept="video/*,image/*" 
+                  onChange={handleReelFileChange} 
+                />
+                {uploadingReel && (
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                    <Loader2 className="w-8 h-8 animate-spin text-white" />
+                  </div>
+                )}
+              </div>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-semibold">وصف الريلز (اختياري)</label>
@@ -581,7 +690,7 @@ export function Profile() {
               />
             </div>
           </div>
-          <DialogFooter className="flex flex-row gap-2 sm:justify-end">
+          <DialogFooter className="flex flex-row gap-2 sm:justify-end sticky bottom-0 bg-background pt-2">
             <Button variant="outline" onClick={() => setIsReelsOpen(false)} className="flex-1 rounded-xl">إلغاء</Button>
             <Button onClick={handleAddReel} className="flex-1 rounded-xl purple-gradient" disabled={uploadingReel || !reelUrl}>
               {uploadingReel ? <Loader2 className="animate-spin w-4 h-4" /> : 'إضافة'}

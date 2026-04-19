@@ -17,15 +17,15 @@ export async function getSystemBotResponse(userMessage: string, history: { role:
   try {
     const ai = getGenAI();
     
-    // Convert history format to the one expected by generateContent if needed
-    // The history should be in the format [{role: 'user', parts: [{text: '...'}]}, ...]
-    
+    // Convert history format to the one expected by generateContent
+    const contents = [
+      ...history,
+      { role: 'user', parts: [{ text: userMessage }] }
+    ];
+
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [
-        ...history,
-        { role: 'user', parts: [{ text: userMessage }] }
-      ],
+      model: "gemini-1.5-flash",
+      contents,
       config: {
         systemInstruction: "أنت المساعد الذكي لتطبيق 'تليعراق' (TeleIraq). تطبيق مراسلة عراقي متطور. أجب بلهجة عراقية محببة وودودة. ساعد المستخدم في فهم ميزات التطبيق أو دردش معه بذكاء. حافظ على الردود قصيرة ومناسبة للدردشة.",
         temperature: 0.7,

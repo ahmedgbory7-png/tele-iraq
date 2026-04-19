@@ -33,14 +33,18 @@ export function Auth() {
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) return setError('يرجى ملء جميع الحقول');
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) return setError('يرجى ملء جميع الحقول');
     if (!isLogin && !displayName) return setError('يرجى إدخال اسم المستخدم');
 
     setLoading(true);
     setError('');
     
     // Normalize "username" to email if it's not an email
-    const authEmail = email.includes('@') ? email : `${email.trim().toLowerCase()}@teleiraq.app`;
+    // Remove spaces and special characters for the local part if not already an email
+    const authEmail = trimmedEmail.includes('@') 
+      ? trimmedEmail 
+      : `${trimmedEmail.replace(/\s+/g, '').toLowerCase()}@teleiraq.app`;
 
     try {
       if (isLogin) {
@@ -59,7 +63,9 @@ export function Auth() {
           status: 'أنا أستخدم تليعراق!',
           lastSeen: serverTimestamp(),
           nameColor: '#8b5cf6',
-          reels: []
+          reels: [],
+          friends: [],
+          blockedUsers: []
         });
       }
     } catch (err: any) {
@@ -70,6 +76,8 @@ export function Auth() {
         setError('اسم المستخدم هذا مستخدم بالفعل');
       } else if (err.code === 'auth/weak-password') {
         setError('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('اسم المستخدم غير صالح. يرجى استخدام أحرف وأرقام فقط.');
       } else {
         setError(err.message || 'حدث خطأ أثناء تسجيل الدخول');
       }

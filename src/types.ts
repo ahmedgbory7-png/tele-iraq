@@ -12,6 +12,8 @@ export interface UserProfile {
     photo?: string;
   };
   reels?: { id: string; url: string; createdAt: any; caption?: string }[];
+  reelsCount?: number;
+  lastReelAt?: any;
   blockedUsers?: string[]; // Array of UIDs this user has blocked
   chatBackground?: string;
   magicUnlockedAt?: any;
@@ -55,7 +57,7 @@ export interface Message {
   chatId: string;
   senderId: string;
   text?: string;
-  type: 'text' | 'image' | 'video' | 'file' | 'location';
+  type: 'text' | 'image' | 'video' | 'file' | 'location' | 'voice';
   fileUrl?: string;
   fileName?: string;
   location?: { latitude: number; longitude: number };
@@ -63,6 +65,7 @@ export interface Message {
   read?: boolean;
   reactions?: { [emoji: string]: string[] }; // emoji -> list of userIds
   gameId?: string;
+  gameType?: 'dominoes' | 'ludo';
   replyTo?: { id: string; text: string; senderName: string };
   isEdited?: boolean;
 }
@@ -80,6 +83,18 @@ export interface DominoGame {
   };
   hands: { [uid: string]: { a: number; b: number }[] };
   boneyard: { a: number; b: number }[];
+  winner: string | null;
+  updatedAt: any;
+}
+
+export interface LudoGame {
+  id: string;
+  type: 'ludo';
+  status: 'playing' | 'finished';
+  players: string[];
+  turn: string;
+  positions: { [userId: string]: number[] }; // 4 pieces per player
+  diceValue: number;
   winner: string | null;
   updatedAt: any;
 }

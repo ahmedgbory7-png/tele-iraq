@@ -43,7 +43,7 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() > 0 && id.size() <= 128;
     }
 
     function incoming() {
@@ -55,8 +55,10 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return data.keys().hasAll(['uid']) &&
-             (data.uid == request.auth.uid || data.uid == 'teleiraq-system') &&
+      // For updates, the UID should already be in the document and match request.auth.uid
+      // If UID is provided in the write (or present in merged result), it must match the owner
+      let hasUid = 'uid' in data;
+      return (!hasUid || (data.uid == request.auth.uid || data.uid == 'teleiraq-system')) &&
              (!('phoneNumber' in data) || data.phoneNumber is string) &&
              (!('email' in data) || (data.email is string && data.email.size() <= 200)) &&
              (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
@@ -72,7 +74,9 @@ service cloud.firestore {
              (!('magicUnlockedAt' in data) || (data.magicUnlockedAt == null || data.magicUnlockedAt is timestamp)) &&
              (!('animatedColorsUnlockedAt' in data) || (data.animatedColorsUnlockedAt == null || data.animatedColorsUnlockedAt is timestamp)) &&
              (!('nameColor' in data) || (data.nameColor is string && data.nameColor.size() <= 50)) &&
-             (!('reels' in data) || (data.reels is list && data.reels.size() <= 100));
+             (!('reels' in data) || (data.reels is list && data.reels.size() <= 100)) &&
+             (!('reelsCount' in data) || data.reelsCount is number) &&
+             (!('lastReelAt' in data) || (data.lastReelAt == null || data.lastReelAt is timestamp));
     }
 
     function isValidChat(data) {
@@ -96,7 +100,7 @@ service cloud.firestore {
              data.chatId is string &&
              (data.senderId == request.auth.uid || data.senderId == 'teleiraq-system') &&
              (!('text' in data) || (data.text is string && data.text.size() <= 5000)) &&
-             data.type in ['text', 'image', 'video', 'file', 'location'] &&
+             data.type in ['text', 'image', 'video', 'file', 'location', 'voice'] &&
              (!('fileUrl' in data) || (data.fileUrl is string && data.fileUrl.size() <= 1000000)) &&
              (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 200)) &&
              (!('location' in data) || (data.location is map && data.location.latitude is number && data.location.longitude is number)) &&
@@ -118,8 +122,18 @@ service cloud.firestore {
       allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
       allow update: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && (
         (incoming().diff(existing()).affectedKeys().hasOnly(['lastSeen'])) ||
-        (incoming().diff(existing()).affectedKeys().hasAny(['displayName', 'photoURL', 'status', 'chatBackground', 'privacy', 'notificationSounds', 'sessionVersion', 'friends', 'blockedUsers', 'magicUnlockedAt', 'animatedColorsUnlockedAt', 'nameColor', 'reels']))
+        (incoming().diff(existing()).affectedKeys().hasAny(['displayName', 'photoURL', 'status', 'chatBackground', 'privacy', 'notificationSounds', 'sessionVersion', 'friends', 'blockedUsers', 'magicUnlockedAt', 'animatedColorsUnlockedAt', 'nameColor', 'reels', 'reelsCount', 'lastReelAt']))
       );
+
+      match /userReels/{reelId} {
+        allow read: if isAuthenticated();
+        allow create: if isOwner(userId) && 
+                      incoming().keys().hasAll(['url', 'createdAt', 'userId']) &&
+                      incoming().url is string && incoming().url.size() <= 1000000 &&
+                      incoming().createdAt is timestamp &&
+                      incoming().userId == request.auth.uid;
+        allow delete: if isOwner(userId);
+      }
     }
 
     match /chats/{chatId} {

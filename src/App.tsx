@@ -252,11 +252,13 @@ export default function App() {
     
     // Heartbeat for "Last Seen"
     const updatePresence = async () => {
+      if (!user?.uid) return;
       if (document.visibilityState === 'visible') {
         try {
-          await updateDoc(doc(db, 'users', user.uid), {
+          // Use setDoc with merge: true to avoid "not found" or permission errors if profile doesn't exist yet
+          await setDoc(doc(db, 'users', user.uid), {
             lastSeen: serverTimestamp()
-          });
+          }, { merge: true });
         } catch (e) {
           console.error("Heartbeat error:", e);
         }
@@ -379,14 +381,14 @@ export default function App() {
           className="absolute inset-0 flex flex-col bg-background z-20 shadow-xl"
           style={{ pointerEvents: !isSubPageActive ? 'none' : 'auto' }}
         >
-          {activeChatId ? (
-            <ChatWindow chatId={activeChatId} onClose={closeSubPage} />
+          {viewingProfileId ? (
+            <Profile />
           ) : currentTab === 'profile' ? (
             <Profile />
           ) : currentTab === 'settings' ? (
             <Settings />
-          ) : viewingProfileId ? (
-            <Profile />
+          ) : activeChatId ? (
+            <ChatWindow chatId={activeChatId} onClose={closeSubPage} />
           ) : null}
         </motion.div>
       </div>

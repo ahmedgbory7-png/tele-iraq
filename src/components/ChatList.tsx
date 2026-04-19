@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2, Users, Trash2, Check, X } from 'lucide-react';
+import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2, Users, Trash2, Check, X, Plus } from 'lucide-react';
 import { auth } from '@/firebase';
 import { format } from 'date-fns';
 import { Language, translations } from '@/lib/i18n';
@@ -42,8 +42,31 @@ export function ChatList() {
   const [contacts, setContacts] = useState<UserProfile[]>([]);
   const [isUpdatingFriend, setIsUpdatingFriend] = useState<string | null>(null);
 
+  const [isDeletingChat, setIsDeletingChat] = useState<string | null>(null);
+  const [friendReels, setFriendReels] = useState<{ userId: string; displayName: string; photoURL?: string; reelsCount: number }[]>([]);
+
+  const handleDeleteConversation = async (chatId: string) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذه المحادثة بالكامل؟ سيتم حذف جميع الرسائل من الطرفين.')) return;
+    try {
+      // 1. Delete all messages first
+      const q = query(collection(db, 'chats', chatId, 'messages'));
+      const snap = await getDocs(q);
+      const batch = snap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(batch);
+
+      // 2. Delete the chat document
+      await deleteDoc(doc(db, 'chats', chatId));
+      
+      if (activeChatId === chatId) setActiveChatId(null);
+      alert('تم حذف المحادثة بالكامل.');
+    } catch (err) {
+      console.error(err);
+      alert('فشل في حذف المحادثة.');
+    }
+  };
+
   const handleDeleteChatHistory = async (chatId: string) => {
-    if (!window.confirm('هل أنت متأكد من مسح جميع الرسائل مع هذا الصديق؟ لا يمكن التراجع عن هذا الإجراء.')) return;
+    if (!window.confirm('هل أنت متأكد من مسح جميع الرسائل في هذه المحادثة؟ لا يمكن التراجع عن هذا الإجراء.')) return;
     try {
       const q = query(collection(db, 'chats', chatId, 'messages'));
       const snap = await getDocs(q);
@@ -54,15 +77,15 @@ export function ChatList() {
         lastMessage: deleteField()
       });
       
-      alert('تم مسح الدردشة بنجاح.');
+      alert('تم مسح الرسائل بنجاح.');
     } catch (err) {
       console.error(err);
-      alert('فشل مسح الدردشة.');
+      alert('فشل مسح الرسائل.');
     }
   };
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!currentUser?.uid) {
       setChats([]);
       setOtherProfiles({});
       setContacts([]);
@@ -73,20 +96,33 @@ export function ChatList() {
 
     const fetchContacts = async () => {
       try {
-        if (!currentUser?.friends || currentUser.friends.length === 0) {
+        if (!currentUser?.uid || !currentUser?.friends || currentUser.friends.length === 0) {
           setContacts([]);
+          setFriendReels([]);
           return;
         }
         
         // Fetch only friends
         const friendsProfiles: UserProfile[] = [];
+        const reelsList: typeof friendReels = [];
+
         for (const friendId of currentUser.friends) {
           const friendDoc = await getDoc(doc(db, 'users', friendId));
           if (friendDoc.exists()) {
-            friendsProfiles.push(friendDoc.data() as UserProfile);
+            const data = friendDoc.data() as UserProfile;
+            friendsProfiles.push(data);
+            if (data.reelsCount && data.reelsCount > 0) {
+              reelsList.push({
+                userId: data.uid,
+                displayName: data.displayName || 'مستخدم',
+                photoURL: data.photoURL,
+                reelsCount: data.reelsCount
+              });
+            }
           }
         }
         setContacts(friendsProfiles.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')));
+        setFriendReels(reelsList);
       } catch (err) {
         console.error("Error fetching contacts:", err);
       }
@@ -205,7 +241,7 @@ export function ChatList() {
           ];
           
           // Deduplicate and run
-          const uniqueVariations = Array.from(new Set(variations));
+          const uniqueVariations = Array.from(new Set(variations)).filter(v => !!v);
           uniqueVariations.forEach(fmt => {
             remoteQueries.push(getDocs(query(
               collection(db, 'users'),
@@ -607,6 +643,49 @@ export function ChatList() {
         </div>
       )}
 
+      {/* WhatsApp Style Reels */}
+      {currentTab === 'chats' && !searchQuery && (
+        <div className="bg-card border-b py-4">
+          <ScrollArea className="w-full">
+            <div className="flex px-4 gap-4">
+              {/* My Status */}
+              <div 
+                className="flex flex-col items-center gap-1 cursor-pointer group"
+                onClick={() => setShowProfile(true)}
+              >
+                <div className="relative">
+                  <Avatar className="h-14 w-14 border-2 border-primary/20 p-1">
+                    <AvatarImage src={currentUser?.photoURL || undefined} className="rounded-full" />
+                    <AvatarFallback className="bg-muted text-muted-foreground font-bold">أنت</AvatarFallback>
+                  </Avatar>
+                  <div className="absolute bottom-0 right-0 bg-primary text-white rounded-full p-0.5 border-2 border-card">
+                    <Plus className="h-3 w-3" />
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold text-muted-foreground">قصتي</span>
+              </div>
+
+              {/* Friends Status */}
+              {friendReels.map((friend) => (
+                <div 
+                  key={friend.userId} 
+                  className="flex flex-col items-center gap-1 cursor-pointer group"
+                  onClick={() => setViewingProfileId(friend.userId)}
+                >
+                  <div className="p-[2px] rounded-full border-2 border-primary">
+                    <Avatar className="h-14 w-14 border-2 border-card">
+                      <AvatarImage src={friend.photoURL || undefined} className="rounded-full" />
+                      <AvatarFallback className="font-bold">{friend.displayName.slice(0, 2)}</AvatarFallback>
+                    </Avatar>
+                  </div>
+                  <span className="text-[10px] font-bold truncate max-w-[66px]">{friend.displayName}</span>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </div>
+      )}
+
       {/* List */}
       <div className="flex-1 overflow-y-auto no-scrollbar overscroll-contain">
         <div className="p-2 space-y-1">
@@ -700,12 +779,12 @@ export function ChatList() {
                     dragElastic={0.1}
                     onDragEnd={(e, info) => {
                       if (info.offset.x < -80) {
-                        handleDeleteChatHistory(chat.id);
+                        setIsDeletingChat(chat.id);
                       }
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      handleDeleteChatHistory(chat.id);
+                      setIsDeletingChat(chat.id);
                     }}
                     role="button"
                     tabIndex={0}
@@ -818,6 +897,48 @@ export function ChatList() {
           <UserPlus className="w-6 h-6" />
         </Button>
       )}
+      {/* Deletion Dialog */}
+      <Dialog open={!!isDeletingChat} onOpenChange={(open) => !open && setIsDeletingChat(null)}>
+        <DialogContent className="sm:max-w-[425px]" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>إدارة المحادثة</DialogTitle>
+          </DialogHeader>
+          <div className="py-6 space-y-4">
+            <Button 
+              variant="outline" 
+              className="w-full h-14 rounded-2xl justify-start gap-4 border-primary/20 hover:bg-primary/5"
+              onClick={() => {
+                if (isDeletingChat) handleDeleteChatHistory(isDeletingChat);
+                setIsDeletingChat(null);
+              }}
+            >
+              <Trash2 className="w-5 h-5 text-primary" />
+              <div className="text-right">
+                <p className="font-bold text-sm">مسح الرسائل فقط</p>
+                <p className="text-[10px] text-muted-foreground">سيتم حذف كافة الرسائل مع الحفاظ على المحادثة في القائمة</p>
+              </div>
+            </Button>
+
+            <Button 
+              variant="outline" 
+              className="w-full h-14 rounded-2xl justify-start gap-4 border-destructive/20 hover:bg-destructive/5"
+              onClick={() => {
+                if (isDeletingChat) handleDeleteConversation(isDeletingChat);
+                setIsDeletingChat(null);
+              }}
+            >
+              <LogOut className="w-5 h-5 text-destructive" />
+              <div className="text-right">
+                <p className="font-bold text-sm text-destructive">حذف المحادثة بالكامل</p>
+                <p className="text-[10px] text-muted-foreground">سيتم حذف المحادثة والرسائل نهائياً من قائمة الدردشات</p>
+              </div>
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setIsDeletingChat(null)} className="rounded-xl">إلغاء</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

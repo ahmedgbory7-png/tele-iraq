@@ -226,22 +226,22 @@ export function DominoGame({ gameId, currentUser, onClose }: DominoGameProps) {
   );
 }
 
-interface DominoPieceProps {
-  value: { a: number; b: number };
-  size?: 'sm' | 'md';
-  key?: React.Key;
-}
-
-function DominoPiece({ value, size = 'md' }: DominoPieceProps) {
+function DominoPiece({ value, size = 'md', rotation = 0 }: { value: { a: number; b: number }, size?: 'sm' | 'md', rotation?: number, key?: any }) {
   const width = size === 'sm' ? 'w-8' : 'w-12';
   const height = size === 'sm' ? 'h-16' : 'h-24';
 
   return (
-    <div className={`${width} ${height} bg-white rounded-md flex flex-col border-2 border-gray-300 shadow-lg overflow-hidden`}>
+    <div 
+      className={`${width} ${height} bg-[#f9f9f1] rounded-sm flex flex-col border border-[#d4d4b8] shadow-[2px_2px_5px_rgba(0,0,0,0.3)] overflow-hidden relative shrink-0`}
+      style={{ transform: `rotate(${rotation}deg)` }}
+    >
+      <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent pointer-events-none" />
       <div className="flex-1 flex items-center justify-center p-1">
         <Dots count={value.a} size={size} />
       </div>
-      <div className="h-[2px] bg-gray-300 w-full" />
+      <div className="h-[1.5px] bg-[#d4d4b8] w-full relative">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-1 bg-[#d4d4b8] rounded-full" />
+      </div>
       <div className="flex-1 flex items-center justify-center p-1">
         <Dots count={value.b} size={size} />
       </div>
@@ -252,23 +252,61 @@ function DominoPiece({ value, size = 'md' }: DominoPieceProps) {
 function Dots({ count, size }: { count: number, size: 'sm' | 'md' }) {
   const dotSize = size === 'sm' ? 'w-1.5 h-1.5' : 'w-2.5 h-2.5';
   
-  const getGridClass = () => {
-    if (count === 0) return '';
-    if (count === 1) return 'flex items-center justify-center';
-    return 'grid grid-cols-2 gap-1 p-1';
-  };
-
-  const renderDots = () => {
-    const dots = [];
-    for (let i = 0; i < count; i++) {
-      dots.push(<div key={i} className={`${dotSize} bg-black rounded-full shadow-inner`} />);
+  const getDots = () => {
+    switch (count) {
+      case 0: return null;
+      case 1: return <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"><Dot dotSize={dotSize} /></div>;
+      case 2: return (
+        <>
+          <div className="absolute top-1 left-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute bottom-1 right-1"><Dot dotSize={dotSize} /></div>
+        </>
+      );
+      case 3: return (
+        <>
+          <div className="absolute top-1 left-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"><Dot dotSize={dotSize} /></div>
+          <div className="absolute bottom-1 right-1"><Dot dotSize={dotSize} /></div>
+        </>
+      );
+      case 4: return (
+        <>
+          <div className="absolute top-1 left-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute top-1 right-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute bottom-1 left-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute bottom-1 right-1"><Dot dotSize={dotSize} /></div>
+        </>
+      );
+      case 5: return (
+        <>
+          <div className="absolute top-1 left-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute top-1 right-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"><Dot dotSize={dotSize} /></div>
+          <div className="absolute bottom-1 left-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute bottom-1 right-1"><Dot dotSize={dotSize} /></div>
+        </>
+      );
+      case 6: return (
+        <>
+          <div className="absolute top-1 left-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute top-1 right-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute top-1/2 left-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute top-1/2 right-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute bottom-1 left-1"><Dot dotSize={dotSize} /></div>
+          <div className="absolute bottom-1 right-1"><Dot dotSize={dotSize} /></div>
+        </>
+      );
+      default: return null;
     }
-    return dots;
   };
 
   return (
-    <div className={`w-full h-full ${getGridClass()}`}>
-      {renderDots()}
+    <div className="w-full h-full relative">
+      {getDots()}
     </div>
   );
+}
+
+function Dot({ dotSize }: { dotSize: string }) {
+  return <div className={`${dotSize} bg-[#333] rounded-full shadow-inner`} />;
 }
