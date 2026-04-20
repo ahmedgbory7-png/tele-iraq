@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, MoreVertical, Paperclip, Smile, ArrowRight, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Mic, Square, Play, Pause, Trophy } from 'lucide-react';
+import { Send, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
@@ -46,11 +46,9 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [showGroupSettings, setShowGroupSettings] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
-  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  
+  const [loadingMessages, setLoadingMessages] = useState(true);
   
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -69,6 +67,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
 
   useEffect(() => {
     let otherProfileUnsubscribe: (() => void) | null = null;
+    setLoadingMessages(true);
 
     const fetchProfiles = async (data: Chat) => {
       if (!data.isGroup) {
@@ -98,27 +97,59 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
       orderBy('createdAt', 'asc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-      setMessages(msgData);
-      
-      msgData.forEach(async (msg) => {
-        if (!msg.read && msg.senderId !== currentUser?.uid) {
-          try {
-            await updateDoc(doc(db, 'chats', chatId, 'messages', msg.id), { read: true });
-          } catch (err) {
-            console.error("Error marking message as read:", err);
-          }
-        }
+    const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+      const msgData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        const message = { 
+          id: doc.id, 
+          ...data,
+          // Latency compensation: Use now() if server timestamp hasn't arrived yet
+          createdAt: data.createdAt || { toMillis: () => Date.now(), seconds: Math.floor(Date.now()/1000) }
+        } as Message;
+        return message;
       });
+      
+      // Strict client-side sort to ensure correct order regardless of server index state
+      msgData.sort((a, b) => {
+        const getTime = (ca: any) => {
+          if (!ca) return Date.now();
+          if (typeof ca.toMillis === 'function') return ca.toMillis();
+          if (ca.seconds) return ca.seconds * 1000;
+          if (ca instanceof Date) return ca.getTime();
+          return Date.now();
+        };
+        return getTime(a.createdAt) - getTime(b.createdAt);
+      });
+
+      setMessages(msgData);
+      setLoadingMessages(false);
+      
+      // Batch handle unread status to avoid excessive writes
+      const unreadIds = msgData
+        .filter(msg => !msg.read && msg.senderId !== currentUser?.uid)
+        .map(msg => msg.id);
+
+      if (unreadIds.length > 0) {
+        // Mark messages as read with a slight delay to avoid snapshot loops during burst loading
+        setTimeout(() => {
+          unreadIds.forEach(async (id) => {
+            try {
+              await updateDoc(doc(db, 'chats', chatId, 'messages', id), { read: true });
+            } catch (err) {
+              console.error("Error marking as read:", err);
+            }
+          });
+        }, 1000);
+      }
       
       setTimeout(() => {
         if (scrollRef.current) {
           scrollRef.current.scrollIntoView({ behavior: 'smooth' });
         }
-      }, 100);
+      }, 150);
     }, (error) => {
-      console.error("Snapshot error:", error);
+      console.error("Messages snapshot error:", error);
+      setLoadingMessages(false);
     });
 
     // Listen for chat updates (typing, calls, etc)
@@ -174,80 +205,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     setReplyingTo(null);
     setEditingMessage(null);
     setNewMessage('');
-  };
-
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      const chunks: Blob[] = [];
-
-      recorder.ondataavailable = (e) => chunks.push(e.data);
-      recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64 = reader.result as string;
-          sendVoiceMessage(base64);
-        };
-        reader.readAsDataURL(blob);
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      recorder.start();
-      setMediaRecorder(recorder);
-      setIsRecording(true);
-      setRecordingTime(0);
-
-      const interval = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
-
-      (recorder as any)._timer = interval;
-    } catch (err) {
-      console.error("Error starting recording:", err);
-      alert("يرجى السماح بالوصول إلى الميكروفون لإرسال رسائل صوتية.");
-    }
-  };
-
-  const stopRecording = (cancel = false) => {
-    if (mediaRecorder) {
-      clearInterval((mediaRecorder as any)._timer);
-      if (cancel) {
-        mediaRecorder.onstop = () => {
-          mediaRecorder.stream.getTracks().forEach(track => track.stop());
-        };
-      }
-      mediaRecorder.stop();
-      setMediaRecorder(null);
-      setIsRecording(false);
-    }
-  };
-
-  const sendVoiceMessage = async (base64Audio: string) => {
-    if (!currentUser || !chatData) return;
-
-    const msgData = {
-      chatId,
-      senderId: currentUser.uid,
-      type: 'voice',
-      fileUrl: base64Audio,
-      createdAt: serverTimestamp()
-    };
-
-    try {
-      await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
-      await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: {
-          text: '🎤 رسالة صوتية',
-          senderId: currentUser.uid,
-          createdAt: serverTimestamp()
-        },
-        updatedAt: serverTimestamp()
-      });
-    } catch (err) {
-      console.error("Error sending voice message:", err);
-    }
   };
 
   const handleLongPress = (msg: Message) => {
@@ -508,14 +465,39 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   };
 
   const handleDeleteMessage = async (messageId: string) => {
-    if (!currentUser) return;
+    if (!currentUser || !chatData) return;
     setReactionMenuMessageId(null);
     
+    // Check permissions
+    const msg = messages.find(m => m.id === messageId);
+    if (!msg) return;
+
+    const isMe = msg.senderId === currentUser.uid;
+    const isMeAdmin = chatData.isGroup && chatData.admins?.includes(currentUser.uid);
+
+    if (!isMe && !isMeAdmin) {
+      alert('لا تملك صلاحية حذف هذه الرسالة');
+      return;
+    }
+
     if (window.confirm('هل أنت متأكد من حذف هذه الرسالة؟')) {
       try {
         await deleteDoc(doc(db, 'chats', chatId, 'messages', messageId));
+        
+        // If this was the last message, update the chat's lastMessage
+        if (messages.length > 0 && messages[messages.length - 1].id === messageId) {
+          const newLastMsg = messages.length > 1 ? messages[messages.length - 2] : null;
+          await updateDoc(doc(db, 'chats', chatId), {
+            lastMessage: newLastMsg ? {
+              text: newLastMsg.text || (newLastMsg.type === 'image' ? 'الصورة' : (newLastMsg.type === 'voice' ? 'تسجيل صوتي' : 'ملف')),
+              senderId: newLastMsg.senderId,
+              createdAt: newLastMsg.createdAt
+            } : deleteField()
+          });
+        }
       } catch (err) {
         console.error("Error deleting message:", err);
+        alert('حدث خطأ أثناء حذف الرسالة. يرجى المحاولة مرة أخرى.');
       }
     }
   };
@@ -722,21 +704,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     }
   };
 
-  const clearChatHistory = async () => {
-    if (!chatId || !myPermissions.canDeleteMessages) return;
-    if (!window.confirm('هل أنت متأكد من مسح جميع الرسائل في هذه المجموعة؟')) return;
-    
-    try {
-      const q = query(collection(db, 'chats', chatId, 'messages'));
-      const snap = await getDocs(q);
-      const batch = snap.docs.map(d => deleteDoc(d.ref));
-      await Promise.all(batch);
-      alert('تم مسح جميع الرسائل.');
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   const removeMember = async (uid: string) => {
     if (!chatId || !myPermissions.canKick) return;
     try {
@@ -794,9 +761,11 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
       {/* Header */}
       <div className="glass-header p-3 flex items-center justify-between shadow-sm safe-top">
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="rounded-full ios-touch mr-1" onClick={onClose} title="رجوع">
-            <ArrowRight className="h-6 w-6 text-primary" />
-          </Button>
+          <motion.div whileTap={{ scale: 0.9 }}>
+            <Button variant="ghost" size="icon" className="rounded-full ios-touch mr-1 active:bg-muted" onClick={onClose} title="رجوع">
+              <ArrowRight className="h-6 w-6 text-primary" />
+            </Button>
+          </motion.div>
           <motion.div 
             whileTap={{ scale: 0.95 }}
             className="flex items-center gap-3 cursor-pointer hover:bg-muted/50 p-1 rounded-xl transition-colors min-w-0"
@@ -818,8 +787,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             </Avatar>
             <div className="flex flex-col">
               <span 
-                className={`font-bold text-sm ${(!chatData?.isGroup && otherProfile?.nameColor === 'magic') ? 'magic-color-text' : ''}`} 
-                style={{ color: (chatData?.isGroup ? '#8b5cf6' : (otherProfile?.nameColor === 'magic' ? undefined : (otherProfile?.nameColor || '#141414'))) }}
+                className={`font-bold text-sm ${(!chatData?.isGroup && (otherProfile?.nameColor === 'magic' || otherProfile?.nameColor === 'magic_neon' || otherProfile?.nameColor === 'magic_rb' || otherProfile?.nameColor === 'magic_pb' || otherProfile?.nameColor === 'magic_iraq')) ? (otherProfile?.nameColor === 'magic' ? 'magic-color-text' : otherProfile?.nameColor === 'magic_neon' ? 'magic-neon-orange-text' : otherProfile?.nameColor === 'magic_rb' ? 'magic-red-blue-text' : otherProfile?.nameColor === 'magic_pb' ? 'magic-pink-black-text' : 'magic-iraq-text') : ''}`} 
+                style={{ color: (chatData?.isGroup ? '#8b5cf6' : ((otherProfile?.nameColor === 'magic' || otherProfile?.nameColor === 'magic_neon' || otherProfile?.nameColor === 'magic_rb' || otherProfile?.nameColor === 'magic_pb' || otherProfile?.nameColor === 'magic_iraq') ? undefined : (otherProfile?.nameColor || '#141414'))) }}
               >
                 {chatData?.isGroup ? chatData.groupName : (otherProfile?.displayName || 'مستخدم تليعراق')}
               </span>
@@ -902,31 +871,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         <ShieldAlert className="w-4 h-4" />
                         {iBlockedOther ? 'إلغاء الحظر' : 'حظر المستخدم'}
                       </Button>
-                      <Button 
-                        variant="ghost" 
-                        className="w-full justify-start text-xs rounded-xl h-10 gap-2 text-primary"
-                        onClick={() => { clearChatHistory(); setShowMoreMenu(false); }}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        مسح جميع الرسائل
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        className="w-full justify-start text-xs rounded-xl h-10 gap-2 text-destructive font-bold"
-                        onClick={async () => {
-                          if (window.confirm('هل أنت متأكد من حذف هذه المحادثة نهائياً؟')) {
-                            try {
-                              await deleteDoc(doc(db, 'chats', chatId));
-                              onClose();
-                            } catch (err) {
-                              console.error(err);
-                            }
-                          }
-                        }}
-                      >
-                        <LogOut className="w-4 h-4" />
-                        حذف المحادثة
-                      </Button>
                     </>
                   )}
                 </motion.div>
@@ -952,7 +896,21 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         <div className="p-4 min-h-full">
           <div className="space-y-2 max-w-3xl mx-auto pb-4">
           <AnimatePresence initial={false}>
-            {messages.map((msg, idx) => {
+            {loadingMessages ? (
+              <div className="flex flex-col items-center justify-center py-20 pointer-events-none">
+                <Loader2 className="w-8 h-8 animate-spin text-primary/40 mb-2" />
+                <p className="text-xs text-muted-foreground animate-pulse">جاري تحميل الرسائل...</p>
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 pointer-events-none">
+                <div className="w-16 h-16 rounded-full bg-primary/5 flex items-center justify-center mb-4">
+                  <MessageSquare className="w-8 h-8 text-primary/20" />
+                </div>
+                <p className="text-sm font-bold text-muted-foreground">لا توجد رسائل بعد</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">ابدأ المحادثة الآن!</p>
+              </div>
+            ) : (
+              messages.map((msg, idx) => {
               const isMe = msg.senderId === currentUser?.uid;
               const senderProfile = chatData?.isGroup ? participants[msg.senderId] : (isMe ? currentUser : otherProfile);
               const showAvatar = !isMe && (idx === 0 || messages[idx - 1].senderId !== msg.senderId);
@@ -968,16 +926,25 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                   dragConstraints={{ left: 0, right: 0 }}
                   dragElastic={{ left: 0.5, right: 0 }}
                   onDragEnd={(_, info) => {
-                    if (info.offset.x < -60) {
+                    if (isMe && info.offset.x < -60) {
+                      startReplyMessage(msg);
+                    } else if (!isMe && info.offset.x > 60) {
                       startReplyMessage(msg);
                     }
                   }}
-                  className={`flex ${isMe ? 'justify-start' : 'justify-end'} items-end gap-2 mb-1 group relative`}
+                  className={`flex ${isMe ? 'flex-row' : 'flex-row-reverse'} items-end gap-2 mb-1 group relative`}
                 >
                   {/* Swipe Reply Indicator */}
-                  <div className="absolute -left-12 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 transition-opacity pointer-events-none">
-                    <ArrowRight className="w-6 h-6 rotate-180 text-primary animate-pulse" />
-                  </div>
+                  {isMe && (
+                    <div className="absolute -left-12 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 transition-opacity pointer-events-none">
+                      <ArrowLeft className="w-6 h-6 text-primary animate-pulse" />
+                    </div>
+                  )}
+                  {!isMe && (
+                    <div className="absolute -right-12 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 transition-opacity pointer-events-none">
+                      <ArrowRight className="w-6 h-6 text-primary animate-pulse" />
+                    </div>
+                  )}
                   {!isMe && (
                     <div className="w-8 shrink-0">
                       {showAvatar && (
@@ -1011,34 +978,51 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                       onPointerLeave={handlePressEnd}
                       className={`px-3 py-2 rounded-2xl shadow-sm relative group cursor-pointer transition-all active:scale-[0.98] ${
                         isMe 
-                          ? 'bg-primary text-white rounded-bl-none' 
-                          : 'bg-card text-foreground rounded-br-none'
-                      } ${!isLastInGroup ? (isMe ? 'rounded-bl-2xl' : 'rounded-br-2xl') : ''}`}
+                          ? 'bg-primary text-white rounded-br-none' 
+                          : 'bg-card text-foreground rounded-bl-none'
+                      } ${!isLastInGroup ? (isMe ? 'rounded-br-2xl' : 'rounded-bl-2xl') : ''}`}
                     >
                       {/* Telegram Tail */}
                       {isLastInGroup && (
-                        <div className={`absolute bottom-[-1px] ${isMe ? '-left-2' : '-right-2'}`}>
+                        <div className={`absolute bottom-[-1px] ${isMe ? '-right-2' : '-left-2'}`}>
                           <svg width="10" height="10" viewBox="0 0 10 10" className={isMe ? 'text-primary fill-current' : 'text-card fill-current'}>
-                            <path d={isMe ? "M10 0 L10 10 L0 10 Q5 10 10 0" : "M0 0 L0 10 L10 10 Q5 10 0 0"} />
+                            <path d={isMe ? "M0 0 L0 10 L10 10 Q5 10 0 0" : "M10 0 L10 10 L0 10 Q5 10 10 0"} />
                           </svg>
                         </div>
                       )}
                       
                       {msg.replyTo && (
                         <div 
-                          className={`mb-2 p-2 rounded-lg border-r-4 text-[11px] bg-black/5 flex flex-col gap-0.5 max-w-full overflow-hidden ${
+                          className={`mb-2 p-2 rounded-lg border-r-4 text-[11px] bg-black/5 flex flex-col gap-0.5 max-w-full overflow-hidden cursor-pointer hover:bg-black/10 transition-colors ${
                             isMe ? 'border-r-white/50 text-white/90' : 'border-r-primary text-primary'
                           }`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const replyEl = document.getElementById(`msg-${msg.replyTo?.id}`);
+                            if (replyEl) replyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }}
                         >
                           <span className="font-bold truncate">{msg.replyTo.senderName}</span>
                           <span className="opacity-80 truncate">{msg.replyTo.text}</span>
                         </div>
                       )}
+
+                      {msg.type === 'text' && msg.text && (
+                        <div className={`whitespace-pre-wrap break-words leading-relaxed text-[15px] mb-1 ${isMe ? 'text-white' : 'text-foreground'}`}>
+                          {msg.text}
+                        </div>
+                      )}
+                      
+                      {msg.type !== 'text' && msg.text && (
+                        <div className={`whitespace-pre-wrap break-words leading-relaxed text-[13px] mb-2 opacity-80 ${isMe ? 'text-white' : 'text-foreground'}`}>
+                          {msg.text}
+                        </div>
+                      )}
                       
                       {chatData?.isGroup && !isMe && showAvatar && (
                         <p 
-                          className={`text-[10px] font-bold mb-0.5 ${senderProfile?.nameColor === 'magic' ? 'magic-color-text' : ''}`} 
-                          style={{ color: senderProfile?.nameColor === 'magic' ? undefined : (senderProfile?.nameColor || '#8b5cf6') }}
+                          className={`text-[10px] font-bold mb-0.5 ${(senderProfile?.nameColor === 'magic' || senderProfile?.nameColor === 'magic_neon' || senderProfile?.nameColor === 'magic_rb' || senderProfile?.nameColor === 'magic_pb' || senderProfile?.nameColor === 'magic_iraq') ? (senderProfile?.nameColor === 'magic' ? 'magic-color-text' : senderProfile?.nameColor === 'magic_neon' ? 'magic-neon-orange-text' : senderProfile?.nameColor === 'magic_rb' ? 'magic-red-blue-text' : senderProfile?.nameColor === 'magic_pb' ? 'magic-pink-black-text' : 'magic-iraq-text') : ''}`} 
+                          style={{ color: (senderProfile?.nameColor === 'magic' || senderProfile?.nameColor === 'magic_neon' || senderProfile?.nameColor === 'magic_rb' || senderProfile?.nameColor === 'magic_pb' || senderProfile?.nameColor === 'magic_iraq') ? undefined : (senderProfile?.nameColor || '#8b5cf6') }}
                         >
                           {senderProfile?.displayName}
                         </p>
@@ -1114,40 +1098,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         </div>
                       )}
                       {msg.type === 'voice' && (
-                        <div className="flex items-center gap-2 py-1 min-w-[150px]">
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className={`h-8 w-8 rounded-full ${isMe ? 'text-white hover:bg-white/10' : 'text-primary hover:bg-primary/10'}`}
-                            onClick={() => {
-                              const audio = document.getElementById(`audio-${msg.id}`) as HTMLAudioElement;
-                              if (audio) {
-                                if (playingVoiceId === msg.id) {
-                                  audio.pause();
-                                  setPlayingVoiceId(null);
-                                } else {
-                                  audio.play();
-                                  setPlayingVoiceId(msg.id);
-                                }
-                              }
-                            }}
-                          >
-                            {playingVoiceId === msg.id ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current ml-0.5" />}
-                          </Button>
-                          <div className="flex-1 h-1 bg-black/10 rounded-full relative overflow-hidden">
-                            <motion.div 
-                              className={`absolute inset-y-0 left-0 ${isMe ? 'bg-white/40' : 'bg-primary/40'}`}
-                              animate={playingVoiceId === msg.id ? { width: '100%' } : { width: '0%' }}
-                              transition={playingVoiceId === msg.id ? { duration: 10, ease: 'linear' } : { duration: 0 }}
-                            />
-                            <audio 
-                              id={`audio-${msg.id}`} 
-                              src={msg.fileUrl} 
-                              onEnded={() => setPlayingVoiceId(null)}
-                              className="hidden"
-                            />
-                          </div>
-                          <Mic className={`h-3 w-3 ${isMe ? 'text-white/60' : 'text-primary/60'}`} />
+                        <div className="flex items-center gap-2 py-1 text-[10px] opacity-70">
+                          (صوت)
                         </div>
                       )}
                       <div className={`text-[10px] flex items-center justify-start gap-1 ${isMe ? 'text-white/80' : 'text-muted-foreground'}`}>
@@ -1164,14 +1116,14 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         )}
                       </div>
 
-                      <AnimatePresence>
-                        {reactionMenuMessageId === msg.id && (
-                          <motion.div 
-                            initial={{ opacity: 0, scale: 0.5, y: 10 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.5, y: 10 }}
-                            className={`absolute -top-12 ${isMe ? 'right-0' : 'left-0'} bg-card border shadow-xl rounded-full p-1 flex gap-1 z-50 overflow-hidden`}
-                          >
+                        <AnimatePresence>
+                          {reactionMenuMessageId === msg.id && (
+                            <motion.div 
+                              initial={{ opacity: 0, scale: 0.5, y: 10 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              exit={{ opacity: 0, scale: 0.5, y: 10 }}
+                              className={`absolute -top-12 ios-touch right-0 bg-card border shadow-xl rounded-full p-1 flex gap-1 z-50 overflow-hidden`}
+                            >
                             <div className="flex gap-1 px-2 items-center">
                               {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
                                 <button 
@@ -1203,15 +1155,17 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                                   <FileText className="h-4 w-4" />
                                 </Button>
                               )}
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-8 w-8 text-destructive hover:bg-destructive/10 rounded-full"
-                                onClick={() => handleDeleteMessage(msg.id)}
-                                title="حذف"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                               {(isMe || (chatData?.isGroup && chatData?.admins?.includes(currentUser?.uid || ''))) && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="h-8 w-8 text-destructive hover:bg-destructive/10 rounded-full"
+                                  onClick={() => handleDeleteMessage(msg.id)}
+                                  title="حذف"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
                             </div>
                           </motion.div>
                         )}
@@ -1220,7 +1174,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
 
                     {/* Reactions Display */}
                     {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                      <div className={`flex flex-wrap gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`flex flex-wrap gap-1 mt-1 ${isMe ? 'justify-start' : 'justify-end'}`}>
                         {Object.entries(msg.reactions).map(([emoji, userIds]) => {
                           const ids = userIds as string[];
                           return (
@@ -1243,7 +1197,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                   </div>
                 </motion.div>
               );
-            })}
+            }))}
           </AnimatePresence>
           {typingUsers.length > 0 && (
             <div className="flex justify-end items-end gap-2">
@@ -1363,60 +1317,30 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             <MapPin className="h-5 w-5" />
           </Button>
           <div className="flex-1 relative">
-            {isRecording ? (
-              <div className="flex-1 flex items-center gap-2 bg-red-500/10 text-red-500 px-4 rounded-2xl h-11 border border-red-500/20">
-                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                <span className="text-sm font-bold flex-1">جاري التسجيل... {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}</span>
-                <Button 
-                  type="button" 
-                  variant="ghost" 
-                  size="sm" 
-                  className="text-muted-foreground hover:text-red-500"
-                  onClick={() => stopRecording(true)}
-                >
-                  إلغاء
-                </Button>
-              </div>
-            ) : (
-              <>
-                <Input
-                  placeholder="اكتب رسالة..."
-                  value={newMessage}
-                  onChange={handleInputChange}
-                  className="bg-muted/50 border-none rounded-2xl h-11 pr-10 focus-visible:ring-primary/30"
-                />
-                <Button 
-                  type="button" 
-                  variant="ghost" 
-                  size="icon" 
-                  className={`absolute left-1 top-1 rounded-full h-9 w-9 transition-colors ios-touch ${showEmojiPicker ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
-                  onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                >
-                  <Smile className="h-5 w-5" />
-                </Button>
-              </>
-            )}
+            <Input
+              placeholder="اكتب رسالة..."
+              value={newMessage}
+              onChange={handleInputChange}
+              className="bg-muted/50 border-none rounded-2xl h-11 pr-10 focus-visible:ring-primary/30"
+            />
+            <Button 
+              type="button" 
+              variant="ghost" 
+              size="icon" 
+              className={`absolute left-1 top-1 rounded-full h-9 w-9 transition-colors ios-touch ${showEmojiPicker ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            >
+              <Smile className="h-5 w-5" />
+            </Button>
           </div>
-          {newMessage.trim() || isRecording ? (
-            <Button 
-              type={isRecording ? "button" : "submit"} 
-              size="icon" 
-              className={`rounded-full h-11 w-11 shrink-0 transition-all ios-touch ${isRecording ? 'bg-red-500' : 'purple-gradient'}`}
-              onClick={isRecording ? () => stopRecording(false) : undefined}
-            >
-              {isRecording ? <Square className="h-5 w-5" /> : <Send className="h-5 w-5 rotate-180" />}
-            </Button>
-          ) : (
-            <Button 
-              type="button"
-              size="icon" 
-              className="rounded-full h-11 w-11 shrink-0 bg-muted text-muted-foreground ios-touch"
-              onMouseDown={startRecording}
-              onTouchStart={startRecording}
-            >
-              <Mic className="h-5 w-5" />
-            </Button>
-          )}
+          <Button 
+            type="submit" 
+            size="icon" 
+            className={`rounded-full h-11 w-11 shrink-0 transition-all ios-touch ${newMessage.trim() ? 'purple-gradient opacity-100 scale-100' : 'bg-muted text-muted-foreground opacity-50 scale-90 pointer-events-none'}`}
+            disabled={!newMessage.trim()}
+          >
+            <Send className="h-5 w-5 rotate-180" />
+          </Button>
         </form>
       </div>
 
@@ -1565,17 +1489,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                 >
                   {chatData?.isLocked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
                   {chatData?.isLocked ? 'إلغاء قفل الدردشة' : 'قفل الدردشة للأعضاء'}
-                </Button>
-              )}
-
-              {myPermissions.canDeleteMessages && (
-                <Button 
-                  variant="outline" 
-                  className="w-full justify-start text-xs rounded-xl h-10 gap-2 text-orange-600 border-orange-200"
-                  onClick={clearChatHistory}
-                >
-                  <Trash2 className="w-4 h-4" />
-                  مسح جميع الرسائل
                 </Button>
               )}
             </div>

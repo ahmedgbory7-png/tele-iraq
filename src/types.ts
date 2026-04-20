@@ -44,6 +44,7 @@ export interface Chat {
   } };
   isLocked?: boolean;
   typing?: { [userId: string]: boolean };
+  hiddenFor?: string[]; // Array of UIDs who have hidden/deleted the chat for themselves
   call?: {
     type: 'voice' | 'video';
     callerId: string;

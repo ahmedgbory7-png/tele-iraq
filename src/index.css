@@ -169,6 +169,11 @@
   background-size: auto;
 }
 
+.dark .telegram-bg {
+  background-color: #1a1a1e;
+  background-image: url("https://www.transparenttextures.com/patterns/cubes.png");
+}
+
 .purple-gradient {
   background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
 }
@@ -215,6 +220,38 @@
   font-weight: bold;
 }
 
+.magic-neon-orange-text {
+  background: linear-gradient(
+    270deg,
+    #ccff00,
+    #ffffff,
+    #ff8000,
+    #ffae00,
+    #ffffff,
+    #ccff00
+  );
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 3s linear infinite;
+  font-weight: bold;
+  filter: drop-shadow(0 0 5px rgba(204, 255, 0, 0.7));
+}
+
+.magic-neon-orange-bg {
+  background: linear-gradient(
+    270deg,
+    #ccff00,
+    #ffffff,
+    #ff8000,
+    #ffae00,
+    #ffffff,
+    #ccff00
+  );
+  background-size: 200% 200%;
+  animation: magic-bg-anim 3s linear infinite;
+}
+
 .animated-green-text {
   background: linear-gradient(
     270deg,
@@ -241,6 +278,104 @@
   -webkit-text-fill-color: transparent;
   animation: magic-bg-anim 4s ease infinite;
   font-weight: bold;
+}
+
+.magic-red-blue-text {
+  background: linear-gradient(
+    270deg,
+    #ff0000,
+    #ffffff,
+    #1d4ed8,
+    #3b82f6,
+    #ffffff,
+    #ff0000
+  );
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 3s linear infinite;
+  font-weight: bold;
+  filter: drop-shadow(0 0 5px rgba(255, 0, 0, 0.4)) drop-shadow(0 0 5px rgba(29, 78, 216, 0.4));
+}
+
+.magic-red-blue-bg {
+  background: linear-gradient(
+    270deg,
+    #ff0000,
+    #ffffff,
+    #1d4ed8,
+    #3b82f6,
+    #ffffff,
+    #ff0000
+  );
+  background-size: 200% 200%;
+  animation: magic-bg-anim 3s linear infinite;
+}
+
+.magic-pink-black-text {
+  background: linear-gradient(
+    270deg,
+    #ff00ff,
+    #ffffff,
+    #000000,
+    #ff1493,
+    #ffffff,
+    #ff00ff
+  );
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 3s linear infinite;
+  font-weight: bold;
+  filter: drop-shadow(0 0 5px rgba(255, 0, 255, 0.5)) drop-shadow(0 0 2px rgba(255, 255, 255, 0.3));
+}
+
+.magic-pink-black-bg {
+  background: linear-gradient(
+    270deg,
+    #ff00ff,
+    #ffffff,
+    #000000,
+    #ff1493,
+    #ffffff,
+    #ff00ff
+  );
+  background-size: 200% 200%;
+  animation: magic-bg-anim 3s linear infinite;
+}
+
+.magic-iraq-text {
+  background: linear-gradient(
+    270deg,
+    #ff0000,
+    #ffffff,
+    #008000,
+    #ffffff,
+    #000000,
+    #ffffff,
+    #ff0000
+  );
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 3s linear infinite;
+  font-weight: bold;
+  filter: drop-shadow(0 0 5px rgba(255, 0, 0, 0.3)) drop-shadow(0 0 5px rgba(0, 128, 0, 0.3));
+}
+
+.magic-iraq-bg {
+  background: linear-gradient(
+    270deg,
+    #ff0000,
+    #ffffff,
+    #008000,
+    #ffffff,
+    #000000,
+    #ffffff,
+    #ff0000
+  );
+  background-size: 200% 200%;
+  animation: magic-bg-anim 3s linear infinite;
 }
 
 .animated-green-bg {

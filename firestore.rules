@@ -92,6 +92,8 @@ service cloud.firestore {
              (!('isLocked' in data) || data.isLocked is bool) &&
              (!('typing' in data) || data.typing is map) &&
              (!('lastMessage' in data) || data.lastMessage is map) &&
+             (!('hiddenFor' in data) || (data.hiddenFor is list && data.hiddenFor.size() <= 500)) &&
+             (!('call' in data) || data.call is map) &&
              data.updatedAt is timestamp;
     }
 
@@ -148,7 +150,7 @@ service cloud.firestore {
       allow create: if isValidId(chatId) && isAuthenticated() && request.auth.uid in incoming().participants && isValidChat(incoming());
       allow update: if isParticipant() && (
         (incoming().diff(existing()).affectedKeys().hasOnly(['typing'])) ||
-        (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt'])) ||
+        (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt', 'hiddenFor', 'call'])) ||
         (isChatAdmin() && incoming().diff(existing()).affectedKeys().hasAny(['groupName', 'groupPhoto', 'admins', 'memberRoles', 'isLocked', 'participants']))
       );
       allow delete: if isParticipant() && (!('isGroup' in resource.data) || !resource.data.isGroup || (('admins' in resource.data) && request.auth.uid in resource.data.admins));

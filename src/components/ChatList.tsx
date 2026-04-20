@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '@/firebase';
-import { collection, query, where, onSnapshot, orderBy, limit, getDocs, addDoc, serverTimestamp, or, doc, getDoc, setDoc, deleteDoc, arrayUnion, arrayRemove, deleteField, updateDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, limit, getDocs, addDoc, serverTimestamp, or, doc, getDoc, setDoc, deleteDoc, arrayUnion, arrayRemove, deleteField, updateDoc, writeBatch } from 'firebase/firestore';
 import { Chat, UserProfile } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2, Users, Trash2, Check, X, Plus } from 'lucide-react';
+import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2, Users, Trash2, Check, X, Plus, AlertCircle } from 'lucide-react';
 import { auth } from '@/firebase';
 import { format } from 'date-fns';
 import { Language, translations } from '@/lib/i18n';
@@ -43,44 +43,45 @@ export function ChatList() {
   const [isUpdatingFriend, setIsUpdatingFriend] = useState<string | null>(null);
 
   const [isDeletingChat, setIsDeletingChat] = useState<string | null>(null);
+  const [confirmDeleteType, setConfirmDeleteType] = useState<'me' | 'everyone' | null>(null);
   const [friendReels, setFriendReels] = useState<{ userId: string; displayName: string; photoURL?: string; reelsCount: number }[]>([]);
 
-  const handleDeleteConversation = async (chatId: string) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذه المحادثة بالكامل؟ سيتم حذف جميع الرسائل من الطرفين.')) return;
+  const handleDeleteForEveryone = async (chatId: string) => {
     try {
-      // 1. Delete all messages first
+      // 1. Get all messages
       const q = query(collection(db, 'chats', chatId, 'messages'));
       const snap = await getDocs(q);
-      const batch = snap.docs.map(d => deleteDoc(d.ref));
-      await Promise.all(batch);
-
-      // 2. Delete the chat document
-      await deleteDoc(doc(db, 'chats', chatId));
+      
+      // 2. Use batch for large deletions
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => batch.delete(d.ref));
+      batch.delete(doc(db, 'chats', chatId));
+      
+      await batch.commit();
       
       if (activeChatId === chatId) setActiveChatId(null);
-      alert('تم حذف المحادثة بالكامل.');
+      setIsDeletingChat(null);
+      setConfirmDeleteType(null);
     } catch (err) {
-      console.error(err);
-      alert('فشل في حذف المحادثة.');
+      console.error("Error deleting for everyone:", err);
+      alert('فشل في الحذف للجميع. يرجى التحقق من الأذونات.');
     }
   };
 
-  const handleDeleteChatHistory = async (chatId: string) => {
-    if (!window.confirm('هل أنت متأكد من مسح جميع الرسائل في هذه المحادثة؟ لا يمكن التراجع عن هذا الإجراء.')) return;
+  const handleDeleteForMe = async (chatId: string) => {
+    if (!currentUser) return;
+    
     try {
-      const q = query(collection(db, 'chats', chatId, 'messages'));
-      const snap = await getDocs(q);
-      const batch = snap.docs.map(d => deleteDoc(d.ref));
-      await Promise.all(batch);
-      
       await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: deleteField()
+        hiddenFor: arrayUnion(currentUser.uid)
       });
       
-      alert('تم مسح الرسائل بنجاح.');
+      if (activeChatId === chatId) setActiveChatId(null);
+      setIsDeletingChat(null);
+      setConfirmDeleteType(null);
     } catch (err) {
-      console.error(err);
-      alert('فشل مسح الرسائل.');
+      console.error("Error hiding chat:", err);
+      alert('فشل في الحذف من طرفك.');
     }
   };
 
@@ -107,6 +108,7 @@ export function ChatList() {
         const reelsList: typeof friendReels = [];
 
         for (const friendId of currentUser.friends) {
+          if (friendId === currentUser.uid) continue; // Remove my story from conversation page
           const friendDoc = await getDoc(doc(db, 'users', friendId));
           if (friendDoc.exists()) {
             const data = friendDoc.data() as UserProfile;
@@ -136,7 +138,9 @@ export function ChatList() {
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
       try {
-        const chatData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat));
+        const chatData = snapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as Chat))
+          .filter(c => !c.hiddenFor?.includes(currentUser.uid));
         // Sort manually to avoid composite index requirement
         chatData.sort((a, b) => {
           const timeA = a.updatedAt?.toMillis?.() || 0;
@@ -179,34 +183,54 @@ export function ChatList() {
 
     setIsSearching(true);
     
+    // Normalization helper for Arabic
+    const normalizeArabic = (s: string) => 
+      s.replace(/[أإآ]/g, 'ا')
+       .replace(/ة/g, 'ه')
+       .replace(/ى/g, 'ي')
+       .replace(/[\u064B-\u0652]/g, '') // Remove Harakat
+       .trim();
+
+    const normalizedVal = normalizeArabic(val);
+    
     // Local search first in loaded contacts
-    const localResults = contacts.filter(c => 
-      c.displayName?.toLowerCase().includes(val.toLowerCase()) || 
-      c.phoneNumber?.includes(val)
-    );
+    const localResults = contacts.filter(c => {
+      const dbName = normalizeArabic(c.displayName || '');
+      const searchName = normalizedVal;
+      return dbName.includes(searchName) || (c.phoneNumber && normalizeArabic(c.phoneNumber).includes(searchName));
+    });
     
     if (val.length >= 2) {
       const remoteQueries = [];
-      const normalizedVal = val.replace(/\s/g, ''); // Remove spaces
+      const normalized = normalizeArabic(val);
       
-      // 1. Standard name search
-      remoteQueries.push(getDocs(query(
-        collection(db, 'users'),
-        where('displayName', '>=', val),
-        where('displayName', '<=', val + '\uf8ff'),
-        limit(10)
-      )));
-
-      // Add capitalized search for names (Firestore is case-sensitive)
+      // Build aggressive variations for Arabic searches to match different Alif/Yeh/Te styles
+      const Variations = [val];
+      if (normalized !== val) Variations.push(normalized);
+      
+      // If the normalized value contains 'ا' (Alif), try variations with hamzas
+      if (normalized.includes('ا')) {
+        Variations.push(normalized.replace(/ا/g, 'أ'));
+        Variations.push(normalized.replace(/ا/g, 'إ'));
+        Variations.push(normalized.replace(/ا/g, 'آ'));
+      }
+      // If it contains 'ي' (Yeh), try with 'ى'
+      if (normalized.includes('ي')) Variations.push(normalized.replace(/ي/g, 'ى'));
+      // If it contains 'ه' (Heh), try with 'ة'
+      if (normalized.includes('ه')) Variations.push(normalized.replace(/ه/g, 'ة'));
+      
       const capitalized = val.charAt(0).toUpperCase() + val.slice(1);
-      if (capitalized !== val) {
+      if (capitalized !== val) Variations.push(capitalized);
+
+      const uniqueSearches = Array.from(new Set(Variations));
+      uniqueSearches.forEach(name => {
         remoteQueries.push(getDocs(query(
           collection(db, 'users'),
-          where('displayName', '>=', capitalized),
-          where('displayName', '<=', capitalized + '\uf8ff'),
+          where('displayName', '>=', name),
+          where('displayName', '<=', name + '\uf8ff'),
           limit(10)
         )));
-      }
+      });
 
       // 2. Standard phone search as typed
       remoteQueries.push(getDocs(query(
@@ -562,13 +586,37 @@ export function ChatList() {
                       <div className="flex-1 min-w-0" onClick={() => startChat(user)}>
                         <p className={`font-bold text-sm truncate ${
                           user.nameColor === 'magic' ? 'magic-color-text' : 
+                          user.nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
                           user.nameColor === 'animated-green' ? 'animated-green-text' :
                           user.nameColor === 'animated-red' ? 'animated-red-text' : ''
-                        }`} style={{ color: ['magic', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || 'inherit') }}>
+                        }`} style={{ color: ['magic', 'magic_neon', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || 'inherit') }}>
                           {user.displayName}
                         </p>
                         <p className="text-[10px] text-muted-foreground truncate">{user.status || 'متوفر'}</p>
                       </div>
+                      
+                      <Button 
+                        variant={currentUser?.friends?.includes(user.uid) ? "ghost" : "outline"}
+                        size="sm"
+                        className={`rounded-xl h-8 px-3 shrink-0 gap-1 font-bold text-[10px] transition-all ios-touch ${
+                          currentUser?.friends?.includes(user.uid) 
+                            ? 'text-green-500 bg-green-500/10 hover:bg-green-500/20' 
+                            : 'text-primary border-primary/20 hover:bg-primary/5'
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFriend(user.uid);
+                        }}
+                        disabled={isUpdatingFriend === user.uid}
+                      >
+                        {isUpdatingFriend === user.uid ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : currentUser?.friends?.includes(user.uid) ? (
+                          <><Check className="w-3 h-3" /> صديق</>
+                        ) : (
+                          <><UserPlus className="w-3 h-3" /> إضافة</>
+                        )}
+                      </Button>
                     </div>
                   </div>
                 );
@@ -644,27 +692,10 @@ export function ChatList() {
       )}
 
       {/* WhatsApp Style Reels */}
-      {currentTab === 'chats' && !searchQuery && (
+      {currentTab === 'chats' && !searchQuery && friendReels.length > 0 && (
         <div className="bg-card border-b py-4">
           <ScrollArea className="w-full">
             <div className="flex px-4 gap-4">
-              {/* My Status */}
-              <div 
-                className="flex flex-col items-center gap-1 cursor-pointer group"
-                onClick={() => setShowProfile(true)}
-              >
-                <div className="relative">
-                  <Avatar className="h-14 w-14 border-2 border-primary/20 p-1">
-                    <AvatarImage src={currentUser?.photoURL || undefined} className="rounded-full" />
-                    <AvatarFallback className="bg-muted text-muted-foreground font-bold">أنت</AvatarFallback>
-                  </Avatar>
-                  <div className="absolute bottom-0 right-0 bg-primary text-white rounded-full p-0.5 border-2 border-card">
-                    <Plus className="h-3 w-3" />
-                  </div>
-                </div>
-                <span className="text-[10px] font-bold text-muted-foreground">قصتي</span>
-              </div>
-
               {/* Friends Status */}
               {friendReels.map((friend) => (
                 <div 
@@ -721,19 +752,28 @@ export function ChatList() {
                       <p 
                         className={`font-bold text-sm truncate ${
                           user.nameColor === 'magic' ? 'magic-color-text' : 
+                          user.nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
+                          user.nameColor === 'magic_rb' ? 'magic-red-blue-text' :
+                          user.nameColor === 'magic_pb' ? 'magic-pink-black-text' :
+                          user.nameColor === 'magic_iraq' ? 'magic-iraq-text' :
                           user.nameColor === 'animated-green' ? 'animated-green-text' :
                           user.nameColor === 'animated-red' ? 'animated-red-text' : ''
                         }`} 
-                        style={{ color: ['magic', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || '#141414') }}
+                        style={{ color: ['magic', 'magic_neon', 'magic_rb', 'magic_pb', 'magic_iraq', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || '#141414') }}
                       >
                         {user.displayName}
                       </p>
                       <p className="text-[10px] text-muted-foreground truncate">{user.phoneNumber}</p>
                     </div>
+
                     <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="rounded-full shrink-0" 
+                      variant={currentUser?.friends?.includes(user.uid) ? "ghost" : "outline"}
+                      size="sm"
+                      className={`rounded-xl h-8 px-3 shrink-0 gap-1 font-bold text-[10px] transition-all ios-touch ${
+                        currentUser?.friends?.includes(user.uid) 
+                          ? 'text-green-500 bg-green-500/10 hover:bg-green-500/20' 
+                          : 'text-primary border-primary/20 hover:bg-primary/5'
+                      }`}
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleFriend(user.uid);
@@ -741,13 +781,11 @@ export function ChatList() {
                       disabled={isUpdatingFriend === user.uid}
                     >
                       {isUpdatingFriend === user.uid ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : currentUser?.friends?.includes(user.uid) ? (
+                        <><Check className="w-3 h-3" /> صديق</>
                       ) : (
-                        currentUser?.friends?.includes(user.uid) ? (
-                          <Check className="w-4 h-4 text-green-500" />
-                        ) : (
-                          <UserPlus className="w-4 h-4 text-primary" />
-                        )
+                        <><UserPlus className="w-3 h-3" /> إضافة</>
                       )}
                     </Button>
                   </div>
@@ -817,11 +855,15 @@ export function ChatList() {
                           className={`font-bold text-sm truncate ${
                             activeChatId === chat.id ? '' : (
                               nameColor === 'magic' ? 'magic-color-text' : 
+                              nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
+                              nameColor === 'magic_rb' ? 'magic-red-blue-text' :
+                              nameColor === 'magic_pb' ? 'magic-pink-black-text' :
+                              nameColor === 'magic_iraq' ? 'magic-iraq-text' :
                               nameColor === 'animated-green' ? 'animated-green-text' :
                               nameColor === 'animated-red' ? 'animated-red-text' : ''
                             )
                           }`} 
-                          style={{ color: activeChatId === chat.id ? 'white' : (['magic', 'animated-green', 'animated-red'].includes(nameColor) ? undefined : (nameColor || '#141414')) }}
+                          style={{ color: activeChatId === chat.id ? 'white' : (['magic', 'magic_neon', 'magic_rb', 'magic_pb', 'magic_iraq', 'animated-green', 'animated-red'].includes(nameColor) ? undefined : (nameColor || '#141414')) }}
                         >
                           {displayName}
                         </p>
@@ -897,46 +939,95 @@ export function ChatList() {
           <UserPlus className="w-6 h-6" />
         </Button>
       )}
+
       {/* Deletion Dialog */}
-      <Dialog open={!!isDeletingChat} onOpenChange={(open) => !open && setIsDeletingChat(null)}>
-        <DialogContent className="sm:max-w-[425px]" dir="rtl">
+      <Dialog open={!!isDeletingChat && !confirmDeleteType} onOpenChange={(open) => !open && setIsDeletingChat(null)}>
+        <DialogContent className="sm:max-w-[425px] rounded-3xl p-6" dir="rtl">
           <DialogHeader>
-            <DialogTitle>إدارة المحادثة</DialogTitle>
+            <DialogTitle className="text-right text-xl font-black">إدارة المحادثة</DialogTitle>
           </DialogHeader>
           <div className="py-6 space-y-4">
             <Button 
               variant="outline" 
-              className="w-full h-14 rounded-2xl justify-start gap-4 border-primary/20 hover:bg-primary/5"
+              className="w-full h-16 rounded-2xl justify-start gap-4 border-primary/20 hover:bg-primary/5 group transition-all"
               onClick={() => {
-                if (isDeletingChat) handleDeleteChatHistory(isDeletingChat);
-                setIsDeletingChat(null);
+                setConfirmDeleteType('me');
               }}
             >
-              <Trash2 className="w-5 h-5 text-primary" />
-              <div className="text-right">
-                <p className="font-bold text-sm">مسح الرسائل فقط</p>
-                <p className="text-[10px] text-muted-foreground">سيتم حذف كافة الرسائل مع الحفاظ على المحادثة في القائمة</p>
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="text-right flex-1">
+                <p className="font-bold text-base text-primary">حذف من طرفي فقط</p>
+                <p className="text-[10px] text-muted-foreground">سيتم إخفاء المحادثة عندك فقط</p>
               </div>
             </Button>
 
             <Button 
               variant="outline" 
-              className="w-full h-14 rounded-2xl justify-start gap-4 border-destructive/20 hover:bg-destructive/5"
+              className="w-full h-16 rounded-2xl justify-start gap-4 border-destructive/20 hover:bg-destructive/5 group transition-all"
               onClick={() => {
-                if (isDeletingChat) handleDeleteConversation(isDeletingChat);
-                setIsDeletingChat(null);
+                setConfirmDeleteType('everyone');
               }}
             >
-              <LogOut className="w-5 h-5 text-destructive" />
-              <div className="text-right">
-                <p className="font-bold text-sm text-destructive">حذف المحادثة بالكامل</p>
-                <p className="text-[10px] text-muted-foreground">سيتم حذف المحادثة والرسائل نهائياً من قائمة الدردشات</p>
+              <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center text-destructive group-hover:scale-110 transition-transform">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="text-right flex-1">
+                <p className="font-bold text-base text-destructive">حذف نهائياً للجميع</p>
+                <p className="text-[10px] text-muted-foreground">سيتم الحذف من الطرفين تماماً</p>
               </div>
             </Button>
+            
+            <Button 
+              variant="ghost" 
+              className="w-full h-12 rounded-2xl text-muted-foreground font-bold hover:bg-muted"
+              onClick={() => setIsDeletingChat(null)}
+            >
+              إلغاء
+            </Button>
           </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setIsDeletingChat(null)} className="rounded-xl">إلغاء</Button>
-          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Final Confirmation Dialog */}
+      <Dialog open={!!confirmDeleteType} onOpenChange={(open) => !open && setConfirmDeleteType(null)}>
+        <DialogContent className="sm:max-w-[400px] rounded-3xl p-6 shadow-2xl border-none" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-right text-lg font-black flex items-center gap-2 text-destructive">
+              <AlertCircle className="w-5 h-5" />
+              تأكيد الحذف
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="py-4 text-right">
+            <p className="text-sm font-medium leading-relaxed text-muted-foreground">
+              {confirmDeleteType === 'everyone' 
+                ? 'هل أنت متأكد من حذف هذه المحادثة نهائياً للجميع؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف جميع الرسائل من الطرفين تماماً.'
+                : 'هل تريد حذف هذه المحادثة من قائمتك الخاصة؟ ستبقى الرسائل متاحة للطرف الآخر.'}
+            </p>
+          </div>
+
+          <div className="flex gap-3 mt-4">
+            <Button 
+              className={`flex-1 h-12 rounded-2xl font-bold text-white shadow-lg transition-all active:scale-95 ${confirmDeleteType === 'everyone' ? 'bg-destructive hover:bg-destructive/90' : 'bg-primary hover:bg-primary/90'}`}
+              onClick={() => {
+                if (isDeletingChat) {
+                  if (confirmDeleteType === 'everyone') handleDeleteForEveryone(isDeletingChat);
+                  else handleDeleteForMe(isDeletingChat);
+                }
+              }}
+            >
+              تأكيد الحذف
+            </Button>
+            <Button 
+              variant="ghost" 
+              className="flex-1 h-12 rounded-2xl font-bold hover:bg-muted transition-colors"
+              onClick={() => setConfirmDeleteType(null)}
+            >
+              إلغاء
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

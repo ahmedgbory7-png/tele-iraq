@@ -199,7 +199,21 @@ export function Settings() {
               </AvatarFallback>
             </Avatar>
             <div className="flex-1">
-              <h3 className="font-bold text-lg">{profile.displayName}</h3>
+              <h3 
+                className={`font-bold text-lg ${
+                  (profile.nameColor === 'magic' || profile.nameColor === 'magic_neon' || profile.nameColor === 'magic_rb' || profile.nameColor === 'magic_pb' || profile.nameColor === 'magic_iraq') 
+                    ? (
+                        profile.nameColor === 'magic' ? 'magic-color-text' : 
+                        profile.nameColor === 'magic_neon' ? 'magic-neon-orange-text' : 
+                        profile.nameColor === 'magic_rb' ? 'magic-red-blue-text' : 
+                        profile.nameColor === 'magic_pb' ? 'magic-pink-black-text' : 'magic-iraq-text'
+                      ) 
+                    : ''
+                }`}
+                style={{ color: (profile.nameColor === 'magic' || profile.nameColor === 'magic_neon' || profile.nameColor === 'magic_rb' || profile.nameColor === 'magic_pb' || profile.nameColor === 'magic_iraq') ? undefined : (profile.nameColor || 'inherit') }}
+              >
+                {profile.displayName}
+              </h3>
               <p className="text-sm text-muted-foreground">{profile.phoneNumber}</p>
             </div>
             <User className="text-primary h-5 w-5" />

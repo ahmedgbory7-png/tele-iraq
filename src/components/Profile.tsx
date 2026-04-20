@@ -60,9 +60,15 @@ export function Profile() {
   const [saved, setSaved] = useState(false);
   
   const [isMagicUnlocked, setIsMagicUnlocked] = useState(false);
-  const [isAnimatedUnlocked, setIsAnimatedUnlocked] = useState(false);
+  const [isMagic2Unlocked, setIsMagic2Unlocked] = useState(false);
+  const [isMagic3Unlocked, setIsMagic3Unlocked] = useState(false);
+  const [isMagic4Unlocked, setIsMagic4Unlocked] = useState(false);
+  const [isMagicIraqUnlocked, setIsMagicIraqUnlocked] = useState(false);
   const [remainingDaysMagic, setRemainingDaysMagic] = useState<number | null>(null);
-  const [remainingDaysAnimated, setRemainingDaysAnimated] = useState<number | null>(null);
+  const [remainingDaysMagic2, setRemainingDaysMagic2] = useState<number | null>(null);
+  const [remainingDaysMagic3, setRemainingDaysMagic3] = useState<number | null>(null);
+  const [remainingDaysMagic4, setRemainingDaysMagic4] = useState<number | null>(null);
+  const [remainingDaysMagicIraq, setRemainingDaysMagicIraq] = useState<number | null>(null);
 
   useEffect(() => {
     if (currentProfile?.magicUnlockedAt) {
@@ -77,16 +83,88 @@ export function Profile() {
       } else {
         setIsMagicUnlocked(false);
         setRemainingDaysMagic(0);
-        if (nameColor === 'magic') setNameColor('#141414');
       }
     } else {
       setIsMagicUnlocked(false);
       setRemainingDaysMagic(null);
     }
-  }, [currentProfile, nameColor]);
+
+    if (currentProfile?.magic2UnlockedAt) {
+      const unlockDate = currentProfile.magic2UnlockedAt.toDate ? currentProfile.magic2UnlockedAt.toDate() : new Date(currentProfile.magic2UnlockedAt);
+      const now = new Date();
+      const diffMs = unlockDate.getTime() + (30 * 24 * 60 * 60 * 1000) - now.getTime();
+      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      
+      if (days > 0) {
+        setIsMagic2Unlocked(true);
+        setRemainingDaysMagic2(days);
+      } else {
+        setIsMagic2Unlocked(false);
+        setRemainingDaysMagic2(0);
+      }
+    } else {
+      setIsMagic2Unlocked(false);
+      setRemainingDaysMagic2(null);
+    }
+
+    if (currentProfile?.magic3UnlockedAt) {
+      const unlockDate = currentProfile.magic3UnlockedAt.toDate ? currentProfile.magic3UnlockedAt.toDate() : new Date(currentProfile.magic3UnlockedAt);
+      const now = new Date();
+      const diffMs = unlockDate.getTime() + (30 * 24 * 60 * 60 * 1000) - now.getTime();
+      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      
+      if (days > 0) {
+        setIsMagic3Unlocked(true);
+        setRemainingDaysMagic3(days);
+      } else {
+        setIsMagic3Unlocked(false);
+        setRemainingDaysMagic3(0);
+      }
+    } else {
+      setIsMagic3Unlocked(false);
+      setRemainingDaysMagic3(null);
+    }
+
+    if (currentProfile?.magic4UnlockedAt) {
+      const unlockDate = currentProfile.magic4UnlockedAt.toDate ? currentProfile.magic4UnlockedAt.toDate() : new Date(currentProfile.magic4UnlockedAt);
+      const now = new Date();
+      const diffMs = unlockDate.getTime() + (30 * 24 * 60 * 60 * 1000) - now.getTime();
+      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      
+      if (days > 0) {
+        setIsMagic4Unlocked(true);
+        setRemainingDaysMagic4(days);
+      } else {
+        setIsMagic4Unlocked(false);
+        setRemainingDaysMagic4(0);
+      }
+    } else {
+      setIsMagic4Unlocked(false);
+      setRemainingDaysMagic4(null);
+    }
+
+    if (currentProfile?.magicIraqUnlockedAt) {
+      const unlockDate = currentProfile.magicIraqUnlockedAt.toDate ? currentProfile.magicIraqUnlockedAt.toDate() : new Date(currentProfile.magicIraqUnlockedAt);
+      const now = new Date();
+      const diffMs = unlockDate.getTime() + (30 * 24 * 60 * 60 * 1000) - now.getTime();
+      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      
+      if (days > 0) {
+        setIsMagicIraqUnlocked(true);
+        setRemainingDaysMagicIraq(days);
+      } else {
+        setIsMagicIraqUnlocked(false);
+        setRemainingDaysMagicIraq(0);
+      }
+    } else {
+      setIsMagicIraqUnlocked(false);
+      setRemainingDaysMagicIraq(null);
+    }
+  }, [currentProfile]);
 
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [magicCode, setMagicCode] = useState('');
+  const [pendingMagicColor, setPendingMagicColor] = useState<string | null>(null);
   const [isReelsOpen, setIsReelsOpen] = useState(false);
   const [reelCaption, setReelCaption] = useState('');
   const [reelUrl, setReelUrl] = useState('');
@@ -155,50 +233,87 @@ export function Profile() {
 
   const handleColorClick = (color: string) => {
     setNameColor(color);
+    // Auto-save color change if we have the profile
+    if (profile?.uid) {
+      updateDoc(doc(db, 'users', profile.uid), { nameColor: color })
+        .catch(err => console.error("Auto-save color error:", err));
+    }
+  };
+
+  const handleMagicColorClick = (color: string, isUnlocked: boolean) => {
+    // Show preview immediately for visual feedback
+    setNameColor(color);
+    
+    if (isUnlocked) {
+      handleColorClick(color);
+    } else {
+      setPendingMagicColor(color);
+      setIsMagicDialogOpen(true);
+    }
   };
 
   const handleUnlockCode = async () => {
-    if (magicCode === '900') {
+    const code = magicCode.trim().toUpperCase();
+    if (code === '0099') {
       try {
         setLoading(true);
+        let newColor = pendingMagicColor || 'magic';
+
         await updateDoc(doc(db, 'users', profile.uid), {
           magicUnlockedAt: serverTimestamp(),
-          nameColor: 'magic'
+          magic2UnlockedAt: serverTimestamp(),
+          magic3UnlockedAt: serverTimestamp(),
+          magic4UnlockedAt: serverTimestamp(),
+          magicIraqUnlockedAt: serverTimestamp(),
+          nameColor: newColor
         });
         setIsMagicUnlocked(true);
-        setNameColor('magic');
+        setIsMagic2Unlocked(true);
+        setIsMagic3Unlocked(true);
+        setIsMagic4Unlocked(true);
+        setIsMagicIraqUnlocked(true);
+        setNameColor(newColor);
         setIsMagicDialogOpen(false);
         setSaved(true);
         setMagicCode('');
+        setPendingMagicColor(null);
+        alert('✨ تم تفعيل الميزات المميزة واللون السحري بنجاح!');
         setTimeout(() => setSaved(false), 2000);
       } catch (err) {
         console.error(err);
-        alert('فشل تفعيل الميزات المميزة');
+        alert('فشل تفعيل الميزات المميزة. تأكد من اتصال الإنترنت.');
       } finally {
         setLoading(false);
       }
     } else {
-      alert('الكود غير صحيح! حاول مرة أخرى.');
+      alert('الكود غير صحيح! يرجى التأكد من الكود والمحاولة مرة أخرى.');
     }
   };
 
   const handleSave = async () => {
+    if (!profile?.uid) {
+      alert('يجب تسجيل الدخول أولاً لإجراء التغييرات.');
+      return;
+    }
     setLoading(true);
     try {
-      await updateDoc(doc(db, 'users', profile.uid), {
-        displayName,
-        status,
+      const updatedData = {
+        displayName: displayName.trim() || profile.displayName || 'مستخدم تليعراق',
+        status: status.trim() || profile.status || 'أنا أستخدم تليعراق!',
         photoURL,
         nameColor
-      });
+      };
+      
+      await updateDoc(doc(db, 'users', profile.uid), updatedData);
       setSaved(true);
+      alert('✅ تم حفظ التغييرات في ملفك الشخصي بنجاح!');
       setTimeout(() => setSaved(false), 2000);
     } catch (err: any) {
       console.error(err);
       if (err.message?.includes('too large')) {
-        alert('حجم صورة البروفايل كبير جداً. يرجى اختيار صورة أصغر.');
+        alert('❌ حجم الصورة كبير جداً. يرجى اختيار صورة بحجم أقل من 1 ميجابايت.');
       } else {
-        alert('فشل حفظ التغييرات. تحقق من الاتصال بالإنترنت.');
+        alert('❌ فشل في حفظ التغييرات. يرجى التأكد من اتصال الإنترنت.');
       }
     } finally {
       setLoading(false);
@@ -420,8 +535,12 @@ export function Profile() {
             className="flex flex-col gap-1"
           >
             <h1 className={`text-3xl font-bold tracking-tight ${
-              nameColor === 'magic' ? 'magic-color-text' : ''
-            }`} style={{ color: nameColor === 'magic' ? undefined : nameColor === '#141414' ? 'white' : nameColor }}>
+              nameColor === 'magic' ? 'magic-color-text' : 
+              nameColor === 'magic_neon' ? 'magic-neon-orange-text' : 
+              nameColor === 'magic_rb' ? 'magic-red-blue-text' : 
+              nameColor === 'magic_pb' ? 'magic-pink-black-text' : 
+              nameColor === 'magic_iraq' ? 'magic-iraq-text' : ''
+            }`} style={{ color: (nameColor === 'magic' || nameColor === 'magic_neon' || nameColor === 'magic_rb' || nameColor === 'magic_pb' || nameColor === 'magic_iraq') ? undefined : nameColor === '#141414' ? 'white' : nameColor }}>
               {displayName || 'مستخدم جديد'}
             </h1>
             <p className="text-white/60 text-sm font-medium">{formatLastSeen(currentProfile)}</p>
@@ -465,8 +584,15 @@ export function Profile() {
                     />
                   ) : (
                     <p className={`font-bold ${
-                      currentProfile.nameColor === 'magic' ? 'magic-color-text' : ''
-                    }`} style={{ color: currentProfile.nameColor === 'magic' ? undefined : (currentProfile.nameColor || 'inherit') }}>
+                      (currentProfile.nameColor === 'magic' || currentProfile.nameColor === 'magic_neon' || currentProfile.nameColor === 'magic_rb' || currentProfile.nameColor === 'magic_pb' || currentProfile.nameColor === 'magic_iraq') 
+                        ? (
+                            currentProfile.nameColor === 'magic' ? 'magic-color-text' : 
+                            currentProfile.nameColor === 'magic_neon' ? 'magic-neon-orange-text' : 
+                            currentProfile.nameColor === 'magic_rb' ? 'magic-red-blue-text' : 
+                            currentProfile.nameColor === 'magic_pb' ? 'magic-pink-black-text' : 'magic-iraq-text'
+                          ) 
+                        : ''
+                    }`} style={{ color: (currentProfile.nameColor === 'magic' || currentProfile.nameColor === 'magic_neon' || currentProfile.nameColor === 'magic_rb' || currentProfile.nameColor === 'magic_pb' || currentProfile.nameColor === 'magic_iraq') ? undefined : (currentProfile.nameColor || 'inherit') }}>
                       {currentProfile.displayName}
                     </p>
                   )}
@@ -496,14 +622,26 @@ export function Profile() {
                       <div className="flex items-center gap-2">
                         <div 
                           className={`w-6 h-6 rounded-full border border-white/20 ${
-                            nameColor === 'magic' ? 'magic-color-bg' : ''
+                            nameColor === 'magic' ? 'magic-color-bg' : 
+                            nameColor === 'magic_neon' ? 'magic-neon-orange-bg' : 
+                            nameColor === 'magic_rb' ? 'magic-red-blue-bg' : 
+                            nameColor === 'magic_pb' ? 'magic-pink-black-bg' : 
+                            nameColor === 'magic_iraq' ? 'magic-iraq-bg' : ''
                           }`} 
-                          style={{ backgroundColor: nameColor === 'magic' ? undefined : nameColor }}
+                          style={{ backgroundColor: (nameColor === 'magic' || nameColor === 'magic_neon' || nameColor === 'magic_rb' || nameColor === 'magic_pb' || nameColor === 'magic_iraq') ? undefined : nameColor }}
                         />
                         <span className={`font-bold text-sm ${
-                          nameColor === 'magic' ? 'magic-color-text' : ''
-                        }`} style={{ color: nameColor === 'magic' ? undefined : nameColor }}>
-                          {nameColor === 'magic' ? 'سحري' : 'لون مخصص'}
+                          nameColor === 'magic' ? 'magic-color-text' : 
+                          nameColor === 'magic_neon' ? 'magic-neon-orange-text' : 
+                          nameColor === 'magic_rb' ? 'magic-red-blue-text' : 
+                          nameColor === 'magic_pb' ? 'magic-pink-black-text' : 
+                          nameColor === 'magic_iraq' ? 'magic-iraq-text' : ''
+                        }`} style={{ color: (nameColor === 'magic' || nameColor === 'magic_neon' || nameColor === 'magic_rb' || nameColor === 'magic_pb' || nameColor === 'magic_iraq') ? undefined : nameColor }}>
+                          {nameColor === 'magic' ? 'سحري (RGB)' : 
+                           nameColor === 'magic_neon' ? 'سحري (فسفوري)' : 
+                           nameColor === 'magic_rb' ? 'سحري (أحمر وأزرق)' : 
+                           nameColor === 'magic_pb' ? 'سحري (وردي وأسود)' : 
+                           nameColor === 'magic_iraq' ? 'سحري (عـلم العراق)' : 'لون مخصص'}
                         </span>
                       </div>
                     </div>
@@ -535,15 +673,83 @@ export function Profile() {
 
                         <div className="flex flex-wrap gap-2 justify-start mt-4">
                           <button
-                            onClick={() => isMagicUnlocked ? setNameColor('magic') : setIsMagicDialogOpen(true)}
+                            onClick={() => handleMagicColorClick('magic', isMagicUnlocked)}
                             className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
                           >
                             <div className={`absolute inset-0 magic-color-bg opacity-40 ${!isMagicUnlocked ? 'grayscale blur-[1px]' : ''}`} />
                             {isMagicUnlocked ? (
                               <>
-                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري</span>
+                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (RGB)</span>
                                 {remainingDaysMagic !== null && (
                                   <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagic} يوم</span>
+                                )}
+                              </>
+                            ) : (
+                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
+                            )}
+                          </button>
+
+                          <button
+                            onClick={() => handleMagicColorClick('magic_neon', isMagic2Unlocked)}
+                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic_neon' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
+                          >
+                            <div className={`absolute inset-0 magic-neon-orange-bg opacity-40 ${!isMagic2Unlocked ? 'grayscale blur-[1px]' : ''}`} />
+                            {isMagic2Unlocked ? (
+                              <>
+                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (فسفوري)</span>
+                                {remainingDaysMagic2 !== null && (
+                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagic2} يوم</span>
+                                )}
+                              </>
+                            ) : (
+                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
+                            )}
+                          </button>
+
+                          <button
+                            onClick={() => handleMagicColorClick('magic_rb', isMagic3Unlocked)}
+                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic_rb' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
+                          >
+                            <div className={`absolute inset-0 magic-red-blue-bg opacity-40 ${!isMagic3Unlocked ? 'grayscale blur-[1px]' : ''}`} />
+                            {isMagic3Unlocked ? (
+                              <>
+                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (أحمر وأزرق)</span>
+                                {remainingDaysMagic3 !== null && (
+                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagic3} يوم</span>
+                                )}
+                              </>
+                            ) : (
+                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
+                            )}
+                          </button>
+
+                          <button
+                            onClick={() => handleMagicColorClick('magic_pb', isMagic4Unlocked)}
+                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic_pb' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
+                          >
+                            <div className={`absolute inset-0 magic-pink-black-bg opacity-40 ${!isMagic4Unlocked ? 'grayscale blur-[1px]' : ''}`} />
+                            {isMagic4Unlocked ? (
+                              <>
+                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (وردي وأسود)</span>
+                                {remainingDaysMagic4 !== null && (
+                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagic4} يوم</span>
+                                )}
+                              </>
+                            ) : (
+                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
+                            )}
+                          </button>
+
+                          <button
+                            onClick={() => handleMagicColorClick('magic_iraq', isMagicIraqUnlocked)}
+                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic_iraq' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
+                          >
+                            <div className={`absolute inset-0 magic-iraq-bg opacity-40 ${!isMagicIraqUnlocked ? 'grayscale blur-[1px]' : ''}`} />
+                            {isMagicIraqUnlocked ? (
+                              <>
+                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (علم العراق)</span>
+                                {remainingDaysMagicIraq !== null && (
+                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagicIraq} يوم</span>
                                 )}
                               </>
                             ) : (
@@ -570,6 +776,11 @@ export function Profile() {
                     {loading ? <Loader2 className="animate-spin ml-2 h-5 w-5" /> : saved ? <Check className="ml-2 h-5 w-5" /> : null}
                     {saved ? 'تم حفظ ملفك الشخصي' : 'حفظ المعلومات كاملة'}
                   </Button>
+                  
+                  <div className="bg-muted/50 p-4 rounded-2xl border border-dashed border-primary/20 mt-2">
+                    <p className="text-[11px] font-bold text-primary text-center mb-1">- لشراء الالوان المتحركة التواصل عبر الواتساب -</p>
+                    <p className="text-[12px] font-bold text-foreground text-center">07745121483 ابو وطن</p>
+                  </div>
                 </>
               ) : (
                 <div className="bg-primary/5 p-4 rounded-2xl">
