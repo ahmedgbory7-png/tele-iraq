@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare } from 'lucide-react';
+import { Send, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare, BadgeCheck } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
@@ -49,6 +49,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
   
   const [loadingMessages, setLoadingMessages] = useState(true);
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -70,10 +71,22 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     setLoadingMessages(true);
 
     const fetchProfiles = async (data: Chat) => {
+      // Step 1: Immediately use denormalized data if available (Zero server read cost)
+      if (data.participantProfiles) {
+        if (!data.isGroup) {
+          const otherId = data.participants.find(p => p !== currentUser?.uid);
+          if (otherId && data.participantProfiles[otherId]) {
+            setOtherProfile(data.participantProfiles[otherId] as UserProfile);
+          }
+        } else {
+          setParticipants(data.participantProfiles as Record<string, UserProfile>);
+        }
+      }
+
+      // Step 2: Individual real-time listener for "Last Seen" in private chats (Optional but helpful)
       if (!data.isGroup) {
         const otherId = data.participants.find((p: string) => p !== currentUser?.uid);
         if (otherId) {
-          // Listen to other user's profile in real-time for "Last Seen"
           otherProfileUnsubscribe = onSnapshot(doc(db, 'users', otherId), (snapshot) => {
             if (snapshot.exists()) {
               setOtherProfile(snapshot.data() as UserProfile);
@@ -81,14 +94,18 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
           });
         }
       } else {
-        const participantProfiles: Record<string, UserProfile> = {};
-        for (const pid of data.participants) {
-          const pDoc = await getDoc(doc(db, 'users', pid));
-          if (pDoc.exists()) {
-            participantProfiles[pid] = pDoc.data() as UserProfile;
+        // Step 3: Fallback for missing participants (only for old chats or data gaps)
+        const missingIds = data.participants.filter(p => !data.participantProfiles?.[p]);
+        if (missingIds.length > 0) {
+          const participantProfiles: Record<string, UserProfile> = { ...(data.participantProfiles || {}) as any };
+          for (const pid of missingIds) {
+            const pDoc = await getDoc(doc(db, 'users', pid));
+            if (pDoc.exists()) {
+              participantProfiles[pid] = pDoc.data() as UserProfile;
+            }
           }
+          setParticipants(participantProfiles);
         }
-        setParticipants(participantProfiles);
       }
     };
 
@@ -338,6 +355,11 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     const file = e.target.files?.[0];
     if (!file || !currentUser) return;
 
+    if (file.size > 950 * 1024) {
+      alert('الملف كبير جداً. الحد الأقصى هو 1 ميجابايت لضمان النقل بدقة 8K.');
+      return;
+    }
+
     setIsUploading(true);
     const reader = new FileReader();
     reader.onload = async (event) => {
@@ -370,55 +392,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
       }
     };
     reader.readAsDataURL(file);
-  };
-
-  const handleShareLocation = async () => {
-    if (!currentUser) return;
-    
-    setIsLocating(true);
-    if (!navigator.geolocation) {
-      alert("متصفحك لا يدعم تحديد الموقع");
-      setIsLocating(false);
-      return;
-    }
-
-    const options = {
-      enableHighAccuracy: false, // Less accurate is faster and more reliable on some phones
-      timeout: 10000,
-      maximumAge: 0
-    };
-
-    navigator.geolocation.getCurrentPosition(async (position) => {
-      const { latitude, longitude } = position.coords;
-      
-      const msgData = {
-        chatId,
-        senderId: currentUser.uid,
-        type: 'location',
-        location: { latitude, longitude },
-        createdAt: serverTimestamp()
-      };
-
-      try {
-        await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
-        await updateDoc(doc(db, 'chats', chatId), {
-          lastMessage: {
-            text: '📍 موقع جغرافي',
-            senderId: currentUser.uid,
-            createdAt: serverTimestamp()
-          },
-          updatedAt: serverTimestamp()
-        });
-      } catch (err) {
-        console.error("Location share error:", err);
-      } finally {
-        setIsLocating(false);
-      }
-    }, (error) => {
-      console.error("Geolocation error:", error);
-      setIsLocating(false);
-      alert("تعذر الحصول على موقعك. يرجى التأكد من تفعيل نظام GPS");
-    }, options);
   };
 
   const handleReaction = async (messageId: string, emoji: string) => {
@@ -480,25 +453,32 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
       return;
     }
 
-    if (window.confirm('هل أنت متأكد من حذف هذه الرسالة؟')) {
-      try {
-        await deleteDoc(doc(db, 'chats', chatId, 'messages', messageId));
-        
-        // If this was the last message, update the chat's lastMessage
-        if (messages.length > 0 && messages[messages.length - 1].id === messageId) {
-          const newLastMsg = messages.length > 1 ? messages[messages.length - 2] : null;
-          await updateDoc(doc(db, 'chats', chatId), {
-            lastMessage: newLastMsg ? {
-              text: newLastMsg.text || (newLastMsg.type === 'image' ? 'الصورة' : (newLastMsg.type === 'voice' ? 'تسجيل صوتي' : 'ملف')),
-              senderId: newLastMsg.senderId,
-              createdAt: newLastMsg.createdAt
-            } : deleteField()
-          });
-        }
-      } catch (err) {
-        console.error("Error deleting message:", err);
-        alert('حدث خطأ أثناء حذف الرسالة. يرجى المحاولة مرة أخرى.');
+    setDeletingMessageId(messageId);
+  };
+
+  const confirmDeleteMessage = async () => {
+    if (!deletingMessageId || !currentUser || !chatData) return;
+    const messageId = deletingMessageId;
+    
+    try {
+      await deleteDoc(doc(db, 'chats', chatId, 'messages', messageId));
+      
+      // If this was the last message, update the chat's lastMessage
+      if (messages.length > 0 && messages[messages.length - 1].id === messageId) {
+        const newLastMsg = messages.length > 1 ? messages[messages.length - 2] : null;
+        await updateDoc(doc(db, 'chats', chatId), {
+          lastMessage: newLastMsg ? {
+            text: newLastMsg.text || (newLastMsg.type === 'image' ? 'الصورة' : (newLastMsg.type === 'voice' ? 'تسجيل صوتي' : 'ملف')),
+            senderId: newLastMsg.senderId,
+            createdAt: newLastMsg.createdAt
+          } : deleteField()
+        });
       }
+      setDeletingMessageId(null);
+    } catch (err) {
+      console.error("Error deleting message:", err);
+      alert('حدث خطأ أثناء حذف الرسالة. يرجى المحاولة مرة أخرى.');
+      setDeletingMessageId(null);
     }
   };
 
@@ -787,10 +767,13 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             </Avatar>
             <div className="flex flex-col">
               <span 
-                className={`font-bold text-sm ${(!chatData?.isGroup && (otherProfile?.nameColor === 'magic' || otherProfile?.nameColor === 'magic_neon' || otherProfile?.nameColor === 'magic_rb' || otherProfile?.nameColor === 'magic_pb' || otherProfile?.nameColor === 'magic_iraq')) ? (otherProfile?.nameColor === 'magic' ? 'magic-color-text' : otherProfile?.nameColor === 'magic_neon' ? 'magic-neon-orange-text' : otherProfile?.nameColor === 'magic_rb' ? 'magic-red-blue-text' : otherProfile?.nameColor === 'magic_pb' ? 'magic-pink-black-text' : 'magic-iraq-text') : ''}`} 
+                className={`font-bold text-sm flex items-center gap-1 ${(!chatData?.isGroup && (otherProfile?.nameColor === 'magic' || otherProfile?.nameColor === 'magic_neon' || otherProfile?.nameColor === 'magic_rb' || otherProfile?.nameColor === 'magic_pb' || otherProfile?.nameColor === 'magic_iraq')) ? (otherProfile?.nameColor === 'magic' ? 'magic-color-text' : otherProfile?.nameColor === 'magic_neon' ? 'magic-neon-orange-text' : otherProfile?.nameColor === 'magic_rb' ? 'magic-red-blue-text' : otherProfile?.nameColor === 'magic_pb' ? 'magic-pink-black-text' : 'magic-iraq-text') : ''}`} 
                 style={{ color: (chatData?.isGroup ? '#8b5cf6' : ((otherProfile?.nameColor === 'magic' || otherProfile?.nameColor === 'magic_neon' || otherProfile?.nameColor === 'magic_rb' || otherProfile?.nameColor === 'magic_pb' || otherProfile?.nameColor === 'magic_iraq') ? undefined : (otherProfile?.nameColor || '#141414'))) }}
               >
                 {chatData?.isGroup ? chatData.groupName : (otherProfile?.displayName || 'مستخدم تليعراق')}
+                {!chatData?.isGroup && otherProfile?.isVerified && (
+                  <BadgeCheck className="w-4 h-4 text-blue-500 fill-blue-500/20 shrink-0" />
+                )}
               </span>
               <span className="text-[10px] text-primary font-medium">
                 {isTyping ? 'جاري الكتابة...' : (chatData?.isGroup ? `${chatData.participants.length} عضو` : formatLastSeen(otherProfile))}
@@ -945,25 +928,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                       <ArrowRight className="w-6 h-6 text-primary animate-pulse" />
                     </div>
                   )}
-                  {!isMe && (
-                    <div className="w-8 shrink-0">
-                      {showAvatar && (
-                        <Avatar 
-                          className="h-8 w-8 border border-border/50 cursor-pointer hover:ring-2 ring-primary/30 transition-all"
-                          onClick={() => {
-                            if (senderProfile) setViewingProfileId(senderProfile.uid);
-                          }}
-                        >
-                          <AvatarImage src={senderProfile?.photoURL || undefined} />
-                          <AvatarFallback 
-                            className="text-white text-[10px] font-bold bg-muted-foreground/20 text-muted-foreground"
-                          >
-                            {senderProfile?.displayName?.slice(0, 2).toUpperCase() || '??'}
-                          </AvatarFallback>
-                        </Avatar>
-                      )}
-                    </div>
-                  )}
+                  
                   <div 
                     className="relative flex flex-col items-start max-w-[75%]"
                     onClick={() => handleMessageClick(msg)}
@@ -982,6 +947,43 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                           : 'bg-card text-foreground rounded-bl-none'
                       } ${!isLastInGroup ? (isMe ? 'rounded-br-2xl' : 'rounded-bl-2xl') : ''}`}
                     >
+                      {/* Message Header: Avatar + Name (Requested by user) */}
+                      {showAvatar && (
+                        <div className={`flex items-center gap-2 mb-2 pb-1 border-b ${isMe ? 'border-white/10' : 'border-border/50'}`}>
+                          <Avatar 
+                            className="h-6 w-6 border border-white/10 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (senderProfile) setViewingProfileId(senderProfile.uid);
+                            }}
+                          >
+                            <AvatarImage src={senderProfile?.photoURL || undefined} />
+                            <AvatarFallback className="text-[8px] font-bold bg-muted-foreground/20">
+                              {senderProfile?.displayName?.slice(0, 1).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex items-center gap-1 min-w-0">
+                            <p 
+                              className={`text-[11px] font-bold truncate ${
+                                senderProfile?.nameColor === 'magic' ? 'magic-color-text' : 
+                                senderProfile?.nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
+                                senderProfile?.nameColor === 'magic_rb' ? 'magic-red-blue-text' :
+                                senderProfile?.nameColor === 'magic_pb' ? 'magic-pink-black-text' :
+                                senderProfile?.nameColor === 'magic_iraq' ? 'magic-iraq-text' :
+                                senderProfile?.nameColor === 'animated-green' ? 'animated-green-text' :
+                                senderProfile?.nameColor === 'animated-red' ? 'animated-red-text' : ''
+                              }`} 
+                              style={{ color: ['magic', 'magic_neon', 'magic_rb', 'magic_pb', 'magic_iraq', 'animated-green', 'animated-red'].includes(senderProfile?.nameColor || '') ? undefined : (senderProfile?.nameColor || (isMe ? 'white' : '#8b5cf6')) }}
+                            >
+                              {senderProfile?.displayName}
+                            </p>
+                            {senderProfile?.isVerified && (
+                              <BadgeCheck className={`w-3 h-3 shrink-0 ${isMe ? 'text-white' : 'text-blue-500 fill-blue-500/20'}`} />
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Telegram Tail */}
                       {isLastInGroup && (
                         <div className={`absolute bottom-[-1px] ${isMe ? '-right-2' : '-left-2'}`}>
@@ -1019,14 +1021,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         </div>
                       )}
                       
-                      {chatData?.isGroup && !isMe && showAvatar && (
-                        <p 
-                          className={`text-[10px] font-bold mb-0.5 ${(senderProfile?.nameColor === 'magic' || senderProfile?.nameColor === 'magic_neon' || senderProfile?.nameColor === 'magic_rb' || senderProfile?.nameColor === 'magic_pb' || senderProfile?.nameColor === 'magic_iraq') ? (senderProfile?.nameColor === 'magic' ? 'magic-color-text' : senderProfile?.nameColor === 'magic_neon' ? 'magic-neon-orange-text' : senderProfile?.nameColor === 'magic_rb' ? 'magic-red-blue-text' : senderProfile?.nameColor === 'magic_pb' ? 'magic-pink-black-text' : 'magic-iraq-text') : ''}`} 
-                          style={{ color: (senderProfile?.nameColor === 'magic' || senderProfile?.nameColor === 'magic_neon' || senderProfile?.nameColor === 'magic_rb' || senderProfile?.nameColor === 'magic_pb' || senderProfile?.nameColor === 'magic_iraq') ? undefined : (senderProfile?.nameColor || '#8b5cf6') }}
-                        >
-                          {senderProfile?.displayName}
-                        </p>
-                      )}
                       {activeGameId && (msg as any).gameType === 'ludo' && (
                         <motion.div 
                           initial={{ opacity: 0, y: 10 }}
@@ -1305,17 +1299,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
           >
             {isUploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
           </Button>
-          <Button 
-            type="button" 
-            variant="ghost" 
-            size="icon" 
-            className={`rounded-full shrink-0 ios-touch ${isLocating ? 'text-primary animate-pulse' : 'text-muted-foreground'}`}
-            onClick={handleShareLocation}
-            disabled={isLocating}
-            title="مشاركة الموقع"
-          >
-            <MapPin className="h-5 w-5" />
-          </Button>
           <div className="flex-1 relative">
             <Input
               placeholder="اكتب رسالة..."
@@ -1539,6 +1522,21 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             >
               حفظ
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Delete Message Confirmation */}
+      <Dialog open={!!deletingMessageId} onOpenChange={(open) => !open && setDeletingMessageId(null)}>
+        <DialogContent className="sm:max-w-[425px]" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-right">حذف الرسالة</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 text-right">
+            <p className="text-sm text-muted-foreground">هل أنت متأكد من حذف هذه الرسالة؟ لا يمكن التراجع عن هذا الإجراء.</p>
+          </div>
+          <DialogFooter className="flex flex-row-reverse gap-2 sm:justify-start">
+            <Button variant="destructive" onClick={confirmDeleteMessage} className="rounded-xl flex-1 px-8 font-bold">حذف</Button>
+            <Button variant="ghost" onClick={() => setDeletingMessageId(null)} className="rounded-xl flex-1 px-8">إلغاء</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

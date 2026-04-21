@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2, Users, Trash2, Check, X, Plus, AlertCircle } from 'lucide-react';
+import { Search, Settings, Edit, UserPlus, LogOut, Bot, Loader2, Users, Trash2, Check, X, Plus, AlertCircle, BadgeCheck } from 'lucide-react';
 import { auth } from '@/firebase';
 import { format } from 'date-fns';
 import { Language, translations } from '@/lib/i18n';
@@ -97,32 +97,83 @@ export function ChatList() {
 
     const fetchContacts = async () => {
       try {
-        if (!currentUser?.uid || !currentUser?.friends || currentUser.friends.length === 0) {
-          setContacts([]);
+        if (!currentUser?.uid) return;
+
+        // If no friends, fetch a few "Suggested" users to avoid empty screen
+        if (!currentUser.friends || currentUser.friends.length === 0) {
+          try {
+            const suggestedQ = query(collection(db, 'users'), limit(5));
+            const suggestedSnap = await getDocs(suggestedQ);
+            const suggests = suggestedSnap.docs
+              .map(d => d.data() as UserProfile)
+              .filter(u => u.uid !== currentUser.uid);
+            setContacts(suggests);
+          } catch (e) {
+            console.error("Error fetching suggestions:", e);
+            setContacts([]);
+          }
           setFriendReels([]);
           return;
         }
         
-        // Fetch only friends
         const friendsProfiles: UserProfile[] = [];
         const reelsList: typeof friendReels = [];
 
-        for (const friendId of currentUser.friends) {
-          if (friendId === currentUser.uid) continue; // Remove my story from conversation page
-          const friendDoc = await getDoc(doc(db, 'users', friendId));
-          if (friendDoc.exists()) {
-            const data = friendDoc.data() as UserProfile;
-            friendsProfiles.push(data);
-            if (data.reelsCount && data.reelsCount > 0) {
-              reelsList.push({
-                userId: data.uid,
+        // 1. Use denormalized friendDetails first (Instant, zero read cost)
+        const detailsMap = currentUser.friendDetails || {};
+        const availableUids = Object.keys(detailsMap);
+        
+        availableUids.forEach(friendId => {
+          if (friendId === currentUser.uid) return;
+          const data = { uid: friendId, ...detailsMap[friendId] } as UserProfile;
+          friendsProfiles.push(data);
+          
+          if (data.reelsCount && data.reelsCount > 0) {
+            reelsList.push({
+              userId: friendId,
+              displayName: data.displayName || 'مستخدم',
+              photoURL: data.photoURL,
+              reelsCount: data.reelsCount
+            });
+          }
+        });
+
+        // 2. Fetch only missing friends (fallback for legacy data)
+        const missingIds = currentUser.friends.filter(id => id !== currentUser.uid && !detailsMap[id]);
+        
+        if (missingIds.length > 0) {
+          const batchUpdates: Record<string, any> = {};
+          for (const friendId of missingIds) {
+            const friendDoc = await getDoc(doc(db, 'users', friendId));
+            if (friendDoc.exists()) {
+              const data = friendDoc.data() as UserProfile;
+              friendsProfiles.push(data);
+              
+              // Prepare for auto-denormalization
+              batchUpdates[`friendDetails.${friendId}`] = {
                 displayName: data.displayName || 'مستخدم',
-                photoURL: data.photoURL,
-                reelsCount: data.reelsCount
-              });
+                photoURL: data.photoURL || '',
+                nameColor: data.nameColor || '',
+                isVerified: data.isVerified || false,
+                reelsCount: data.reelsCount || 0
+              };
+
+              if (data.reelsCount && data.reelsCount > 0) {
+                reelsList.push({
+                  userId: data.uid,
+                  displayName: data.displayName || 'مستخدم',
+                  photoURL: data.photoURL,
+                  reelsCount: data.reelsCount
+                });
+              }
             }
           }
+          // Back-fill the denormalized data to user doc to save future reads
+          if (Object.keys(batchUpdates).length > 0) {
+             updateDoc(doc(db, 'users', currentUser.uid), batchUpdates).catch(console.error);
+          }
         }
+
         setContacts(friendsProfiles.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')));
         setFriendReels(reelsList);
       } catch (err) {
@@ -149,19 +200,42 @@ export function ChatList() {
         });
         setChats(chatData);
 
-        // Fetch other participants profiles
-        const otherIds = Array.from(new Set(chatData.flatMap(c => c.participants.filter(p => p !== currentUser.uid))));
-        if (otherIds.length > 0) {
-          const profiles: Record<string, UserProfile> = { ...otherProfiles };
-          for (const id of otherIds) {
-            if (!profiles[id]) {
-              const docSnap = await getDoc(doc(db, 'users', id));
-              if (docSnap.exists()) {
-                profiles[id] = docSnap.data() as UserProfile;
+        // Optimization: Use denormalized participantProfiles if available
+        const profiles: Record<string, UserProfile> = { ...otherProfiles };
+        let updated = false;
+
+        chatData.forEach(chat => {
+          if (chat.participantProfiles) {
+            Object.keys(chat.participantProfiles).forEach(uid => {
+              if (uid !== currentUser?.uid) {
+                // Always update if the cached profile is missing or if the denormalized one is verified
+                const existing = profiles[uid];
+                const incoming = chat.participantProfiles![uid];
+                
+                if (!existing || (incoming.isVerified && !existing.isVerified) || incoming.photoURL !== existing.photoURL || incoming.displayName !== existing.displayName) {
+                  profiles[uid] = { ...existing, ...incoming } as UserProfile;
+                  updated = true;
+                }
               }
+            });
+          }
+        });
+
+        if (updated) {
+          setOtherProfiles(profiles);
+        }
+
+        // Fallback: Fetch missing profiles (only for old chats without participantProfiles)
+        const otherIds = Array.from(new Set(chatData.flatMap(c => c.participants.filter(p => p !== currentUser.uid && !profiles[p]))));
+        if (otherIds.length > 0) {
+          for (const id of otherIds) {
+            const docSnap = await getDoc(doc(db, 'users', id));
+            if (docSnap.exists()) {
+              profiles[id] = docSnap.data() as UserProfile;
+              updated = true;
             }
           }
-          setOtherProfiles(profiles);
+          if (updated) setOtherProfiles(profiles);
         }
       } catch (err) {
         console.error("Error in chat snapshot:", err);
@@ -171,7 +245,7 @@ export function ChatList() {
     });
 
     return () => unsubscribe();
-  }, [currentUser]);
+  }, [currentUser?.uid, currentUser?.friends]);
 
   const handleSearch = async (val: string) => {
     setSearchQuery(val);
@@ -314,9 +388,28 @@ export function ChatList() {
     setIsUpdatingFriend(targetUid);
     const isFriend = currentUser.friends?.includes(targetUid);
     try {
-      await updateDoc(doc(db, 'users', currentUser.uid), {
-        friends: isFriend ? arrayRemove(targetUid) : arrayUnion(targetUid)
-      });
+      if (isFriend) {
+        await updateDoc(doc(db, 'users', currentUser.uid), {
+          friends: arrayRemove(targetUid),
+          [`friendDetails.${targetUid}`]: deleteField()
+        });
+      } else {
+        // Fetch friend data once to denormalize
+        const friendDoc = await getDoc(doc(db, 'users', targetUid));
+        if (friendDoc.exists()) {
+          const data = friendDoc.data() as UserProfile;
+          await updateDoc(doc(db, 'users', currentUser.uid), {
+            friends: arrayUnion(targetUid),
+            [`friendDetails.${targetUid}`]: {
+              displayName: data.displayName || 'مستخدم',
+              photoURL: data.photoURL || '',
+              nameColor: data.nameColor || '',
+              isVerified: data.isVerified || false,
+              reelsCount: data.reelsCount || 0
+            }
+          });
+        }
+      }
     } catch (err) {
       console.error("Error toggling friend:", err);
     } finally {
@@ -344,6 +437,7 @@ export function ChatList() {
 
     const newChat = {
       participants: [currentUser.uid, targetUser.uid],
+      participantProfiles: getParticipantProfiles([currentUser, targetUser]),
       updatedAt: serverTimestamp(),
       lastMessage: {
         text: 'بدأت محادثة جديدة',
@@ -375,8 +469,10 @@ export function ChatList() {
   const createGroup = async () => {
     if (!currentUser || !groupName.trim() || selectedContacts.length === 0) return;
 
+    const groupParticipants = [currentUser, ...contacts.filter(c => selectedContacts.includes(c.uid))];
     const newChat = {
-      participants: [currentUser.uid, ...selectedContacts],
+      participants: groupParticipants.map(u => u.uid),
+      participantProfiles: getParticipantProfiles(groupParticipants),
       updatedAt: serverTimestamp(),
       isGroup: true,
       groupName: groupName.trim(),
@@ -426,6 +522,20 @@ export function ChatList() {
 
   const [systemLoading, setSystemLoading] = useState(false);
 
+  const getParticipantProfiles = (users: UserProfile[]) => {
+    const profiles: Record<string, any> = {};
+    users.forEach(u => {
+      profiles[u.uid] = {
+        displayName: u.displayName || 'مستخدم',
+        photoURL: u.photoURL || '',
+        nameColor: u.nameColor || '',
+        isVerified: u.isVerified || false,
+        phoneNumber: u.phoneNumber || ''
+      };
+    });
+    return profiles;
+  };
+
   const startSystemChat = async () => {
     if (!currentUser || systemLoading) return;
     setSystemLoading(true);
@@ -456,6 +566,7 @@ export function ChatList() {
       } else {
         const newChat = {
           participants: [currentUser.uid, systemUser.uid],
+          participantProfiles: getParticipantProfiles([currentUser, systemUser]),
           updatedAt: serverTimestamp(),
           lastMessage: {
             text: 'أهلاً بك في تليعراق! أنا النظام الآلي.',
@@ -493,7 +604,9 @@ export function ChatList() {
     return (
       <div className="flex flex-col h-full bg-card" dir="rtl">
         <div className="p-4 border-b flex items-center justify-between bg-background sticky top-0 z-10">
-          <h2 className="text-xl font-bold">جهات الاتصال</h2>
+          <h2 className="text-xl font-bold">
+            {searchQuery.length > 0 ? 'نتائج البحث' : (currentUser?.friends?.length ? 'جهات الاتصال' : 'اكتشف أشخاصاً')}
+          </h2>
           <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setIsSearching(!isSearching)}>
             <Search className="h-5 w-5" />
           </Button>
@@ -531,22 +644,6 @@ export function ChatList() {
           {/* Action Items */}
             {!searchQuery && (
               <div className="space-y-1 mb-4">
-                <Button variant="ghost" className="w-full justify-start gap-4 h-14 rounded-2xl px-4 hover:bg-primary/5 group" onClick={() => setIsCreateGroupOpen(true)}>
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-                    <Users className="w-5 h-5" />
-                  </div>
-                  <span className="font-bold text-sm">مجموعة جديدة</span>
-                </Button>
-                <Button 
-                  variant="ghost" 
-                  className="w-full justify-start gap-4 h-14 rounded-2xl px-4 hover:bg-blue-500/5 group"
-                  onClick={handleInvite}
-                >
-                  <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
-                    <UserPlus className="w-5 h-5" />
-                  </div>
-                  <span className="font-bold text-sm">دعوة أصدقاء</span>
-                </Button>
                 <Button variant="ghost" className="w-full justify-start gap-4 h-14 rounded-2xl px-4 hover:bg-orange-500/5 group" onClick={startSystemChat}>
                   <div className="w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
                     <Bot className="w-5 h-5" />
@@ -584,14 +681,17 @@ export function ChatList() {
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1 min-w-0" onClick={() => startChat(user)}>
-                        <p className={`font-bold text-sm truncate ${
-                          user.nameColor === 'magic' ? 'magic-color-text' : 
-                          user.nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
-                          user.nameColor === 'animated-green' ? 'animated-green-text' :
-                          user.nameColor === 'animated-red' ? 'animated-red-text' : ''
-                        }`} style={{ color: ['magic', 'magic_neon', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || 'inherit') }}>
-                          {user.displayName}
-                        </p>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <p className={`font-bold text-sm truncate ${
+                            user.nameColor === 'magic' ? 'magic-color-text' : 
+                            user.nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
+                            user.nameColor === 'animated-green' ? 'animated-green-text' :
+                            user.nameColor === 'animated-red' ? 'animated-red-text' : ''
+                          }`} style={{ color: ['magic', 'magic_neon', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || 'inherit') }}>
+                            {user.displayName}
+                          </p>
+                          {user.isVerified && <BadgeCheck className="w-3.5 h-3.5 text-blue-500 fill-blue-500/10 shrink-0" />}
+                        </div>
                         <p className="text-[10px] text-muted-foreground truncate">{user.status || 'متوفر'}</p>
                       </div>
                       
@@ -622,9 +722,23 @@ export function ChatList() {
                 );
               })
             ) : (
-              <div className="py-20 text-center space-y-4 opacity-50">
-                <Search className="w-12 h-12 mx-auto text-muted-foreground" />
-                <p className="text-sm">لم يتم العثور على أي جهات اتصال</p>
+              <div className="py-20 text-center space-y-6 px-10">
+                <div className="w-20 h-20 bg-muted/30 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                  <UserPlus className="w-10 h-10 text-muted-foreground/40" />
+                </div>
+                <div className="space-y-2">
+                  <p className="font-bold text-lg">لا يوجد جهات اتصال بعد</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    ابدأ بالبحث عن أصدقائك عبر الاسم أو رقم الهاتف لإضافتهم إلى قائمتك.
+                  </p>
+                </div>
+                <Button 
+                  onClick={() => setIsSearching(true)}
+                  className="rounded-2xl h-12 px-8 purple-gradient font-bold shadow-lg shadow-purple-500/20"
+                >
+                  <Search className="w-4 h-4 ml-2" />
+                  البحث عن أصدقاء
+                </Button>
               </div>
             )}
           </div>
@@ -649,8 +763,19 @@ export function ChatList() {
             </AvatarFallback>
           </Avatar>
           <div className="flex flex-col">
-            <span className="font-bold text-sm leading-tight">{t.appName}</span>
-            <span className="text-[10px] text-muted-foreground">{t.byAuthor}</span>
+            <span className={`font-bold text-sm leading-tight flex items-center gap-1 ${
+              currentUser?.nameColor === 'magic' ? 'magic-color-text' : 
+              currentUser?.nameColor === 'magic_neon' ? 'magic-neon-orange-text' : 
+              currentUser?.nameColor === 'magic_rb' ? 'magic-red-blue-text' : 
+              currentUser?.nameColor === 'magic_pb' ? 'magic-pink-black-text' : 
+              currentUser?.nameColor === 'magic_iraq' ? 'magic-iraq-text' : 
+              currentUser?.nameColor === 'animated-green' ? 'animated-green-text' : 
+              currentUser?.nameColor === 'animated-red' ? 'animated-red-text' : ''
+            }`} style={{ color: ['magic', 'magic_neon', 'magic_rb', 'magic_pb', 'magic_iraq', 'animated-green', 'animated-red'].includes(currentUser?.nameColor || '') ? undefined : (currentUser?.nameColor || 'inherit') }}>
+              {currentUser?.displayName || t.appName}
+              {currentUser?.isVerified && <BadgeCheck className="w-3.5 h-3.5 text-blue-500 shrink-0" />}
+            </span>
+            <span className="text-[10px] text-muted-foreground">{currentUser?.status || t.byAuthor}</span>
           </div>
         </motion.div>
         <div className="flex gap-1">
@@ -749,20 +874,23 @@ export function ChatList() {
                       className="flex-1 min-w-0"
                       onClick={() => startChat(user)}
                     >
-                      <p 
-                        className={`font-bold text-sm truncate ${
-                          user.nameColor === 'magic' ? 'magic-color-text' : 
-                          user.nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
-                          user.nameColor === 'magic_rb' ? 'magic-red-blue-text' :
-                          user.nameColor === 'magic_pb' ? 'magic-pink-black-text' :
-                          user.nameColor === 'magic_iraq' ? 'magic-iraq-text' :
-                          user.nameColor === 'animated-green' ? 'animated-green-text' :
-                          user.nameColor === 'animated-red' ? 'animated-red-text' : ''
-                        }`} 
-                        style={{ color: ['magic', 'magic_neon', 'magic_rb', 'magic_pb', 'magic_iraq', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || '#141414') }}
-                      >
-                        {user.displayName}
-                      </p>
+                      <div className="flex items-center gap-1 min-w-0">
+                        <p 
+                          className={`font-bold text-sm truncate ${
+                            user.nameColor === 'magic' ? 'magic-color-text' : 
+                            user.nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
+                            user.nameColor === 'magic_rb' ? 'magic-red-blue-text' :
+                            user.nameColor === 'magic_pb' ? 'magic-pink-black-text' :
+                            user.nameColor === 'magic_iraq' ? 'magic-iraq-text' :
+                            user.nameColor === 'animated-green' ? 'animated-green-text' :
+                            user.nameColor === 'animated-red' ? 'animated-red-text' : ''
+                          }`} 
+                          style={{ color: ['magic', 'magic_neon', 'magic_rb', 'magic_pb', 'magic_iraq', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || '#141414') }}
+                        >
+                          {user.displayName}
+                        </p>
+                        {user.isVerified && <BadgeCheck className="w-3.5 h-3.5 text-blue-500 shrink-0" />}
+                      </div>
                       <p className="text-[10px] text-muted-foreground truncate">{user.phoneNumber}</p>
                     </div>
 
@@ -851,22 +979,27 @@ export function ChatList() {
                     </Avatar>
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-baseline">
-                        <p 
-                          className={`font-bold text-sm truncate ${
-                            activeChatId === chat.id ? '' : (
-                              nameColor === 'magic' ? 'magic-color-text' : 
-                              nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
-                              nameColor === 'magic_rb' ? 'magic-red-blue-text' :
-                              nameColor === 'magic_pb' ? 'magic-pink-black-text' :
-                              nameColor === 'magic_iraq' ? 'magic-iraq-text' :
-                              nameColor === 'animated-green' ? 'animated-green-text' :
-                              nameColor === 'animated-red' ? 'animated-red-text' : ''
-                            )
-                          }`} 
-                          style={{ color: activeChatId === chat.id ? 'white' : (['magic', 'magic_neon', 'magic_rb', 'magic_pb', 'magic_iraq', 'animated-green', 'animated-red'].includes(nameColor) ? undefined : (nameColor || '#141414')) }}
-                        >
-                          {displayName}
-                        </p>
+                        <div className="flex items-center gap-1 truncate max-w-[75%]">
+                          <p 
+                            className={`font-bold text-sm truncate ${
+                              activeChatId === chat.id ? '' : (
+                                nameColor === 'magic' ? 'magic-color-text' : 
+                                nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
+                                nameColor === 'magic_rb' ? 'magic-red-blue-text' :
+                                nameColor === 'magic_pb' ? 'magic-pink-black-text' :
+                                nameColor === 'magic_iraq' ? 'magic-iraq-text' :
+                                nameColor === 'animated-green' ? 'animated-green-text' :
+                                nameColor === 'animated-red' ? 'animated-red-text' : ''
+                              )
+                            }`} 
+                            style={{ color: activeChatId === chat.id ? 'white' : (['magic', 'magic_neon', 'magic_rb', 'magic_pb', 'magic_iraq', 'animated-green', 'animated-red'].includes(nameColor) ? undefined : (nameColor || '#141414')) }}
+                          >
+                            {displayName}
+                          </p>
+                          {!isGroup && otherProfile?.isVerified && (
+                            <BadgeCheck className={`w-3.5 h-3.5 shrink-0 ${activeChatId === chat.id ? 'text-white' : 'text-blue-500'} fill-current opacity-90`} />
+                          )}
+                        </div>
                         <div className="flex items-center gap-2">
                           <span className={`text-[10px] ${activeChatId === chat.id ? 'text-white/70' : 'text-muted-foreground'}`}>
                             {chat.updatedAt?.toDate ? format(chat.updatedAt.toDate(), 'hh:mm a', { locale: ar }) : ''}
@@ -902,9 +1035,9 @@ export function ChatList() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">اختر الأعضاء</label>
+              <label className="text-sm font-medium">اختر الأعضاء (الأصدقاء فقط)</label>
               <div className="h-[200px] border rounded-md p-2 overflow-y-auto overscroll-contain">
-                {contacts.map(contact => (
+                {contacts.filter(c => currentUser?.friends?.includes(c.uid)).map(contact => (
                   <div key={contact.uid} className="flex items-center gap-3 p-2 hover:bg-accent rounded-md cursor-pointer" onClick={() => {
                     setSelectedContacts(prev => 
                       prev.includes(contact.uid) 
@@ -917,9 +1050,15 @@ export function ChatList() {
                       <AvatarImage src={contact.photoURL || undefined} />
                       <AvatarFallback style={{ backgroundColor: contact.nameColor }}>{contact.displayName?.slice(0,2)}</AvatarFallback>
                     </Avatar>
-                    <span className="text-sm">{contact.displayName}</span>
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                      <span className="text-sm truncate">{contact.displayName}</span>
+                      {contact.isVerified && <BadgeCheck className="w-3.5 h-3.5 text-blue-500 shrink-0" />}
+                    </div>
                   </div>
                 ))}
+                {contacts.filter(c => currentUser?.friends?.includes(c.uid)).length === 0 && (
+                  <p className="text-xs text-center text-muted-foreground p-4">لا يوجد أصدقاء لإضافتهم للمجموعة</p>
+                )}
               </div>
             </div>
           </div>

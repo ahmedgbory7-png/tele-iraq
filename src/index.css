@@ -378,6 +378,24 @@
   animation: magic-bg-anim 3s linear infinite;
 }
 
+.animated-green-text {
+  background: linear-gradient(270deg, #ccff00, #00ff00, #ccff00);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 4s ease infinite;
+  font-weight: bold;
+}
+
+.animated-red-text {
+  background: linear-gradient(270deg, #ff0000, #aa0000, #ff0000);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 4s ease infinite;
+  font-weight: bold;
+}
+
 .animated-green-bg {
   background: linear-gradient(270deg, #ccff00, #00ff00, #ccff00);
   background-size: 200% 200%;

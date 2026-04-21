@@ -55,8 +55,6 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      // For updates, the UID should already be in the document and match request.auth.uid
-      // If UID is provided in the write (or present in merged result), it must match the owner
       let hasUid = 'uid' in data;
       return (!hasUid || (data.uid == request.auth.uid || data.uid == 'teleiraq-system')) &&
              (!('phoneNumber' in data) || data.phoneNumber is string) &&
@@ -70,8 +68,15 @@ service cloud.firestore {
              (!('notificationSounds' in data) || data.notificationSounds is map) &&
              (!('sessionVersion' in data) || data.sessionVersion is number) &&
              (!('friends' in data) || (data.friends is list && data.friends.size() <= 1000)) &&
+             (!('friendDetails' in data) || data.friendDetails is map) &&
              (!('blockedUsers' in data) || (data.blockedUsers is list && data.blockedUsers.size() <= 1000)) &&
+             (!('isVerified' in data) || data.isVerified is bool) &&
+             (!('verifiedAt' in data) || (data.verifiedAt == null || data.verifiedAt is timestamp)) &&
              (!('magicUnlockedAt' in data) || (data.magicUnlockedAt == null || data.magicUnlockedAt is timestamp)) &&
+             (!('magic2UnlockedAt' in data) || (data.magic2UnlockedAt == null || data.magic2UnlockedAt is timestamp)) &&
+             (!('magic3UnlockedAt' in data) || (data.magic3UnlockedAt == null || data.magic3UnlockedAt is timestamp)) &&
+             (!('magic4UnlockedAt' in data) || (data.magic4UnlockedAt == null || data.magic4UnlockedAt is timestamp)) &&
+             (!('magicIraqUnlockedAt' in data) || (data.magicIraqUnlockedAt == null || data.magicIraqUnlockedAt is timestamp)) &&
              (!('animatedColorsUnlockedAt' in data) || (data.animatedColorsUnlockedAt == null || data.animatedColorsUnlockedAt is timestamp)) &&
              (!('nameColor' in data) || (data.nameColor is string && data.nameColor.size() <= 50)) &&
              (!('reels' in data) || (data.reels is list && data.reels.size() <= 100)) &&
@@ -87,6 +92,7 @@ service cloud.firestore {
              (!('isGroup' in data) || data.isGroup is bool) &&
              (!('groupName' in data) || (data.groupName is string && data.groupName.size() <= 100)) &&
              (!('groupPhoto' in data) || (data.groupPhoto is string && data.groupPhoto.size() <= 1000000)) &&
+             (!('participantProfiles' in data) || data.participantProfiles is map) &&
              (!('admins' in data) || (data.admins is list && data.admins.size() <= 100)) &&
              (!('memberRoles' in data) || data.memberRoles is map) &&
              (!('isLocked' in data) || data.isLocked is bool) &&
@@ -124,7 +130,7 @@ service cloud.firestore {
       allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
       allow update: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && (
         (incoming().diff(existing()).affectedKeys().hasOnly(['lastSeen'])) ||
-        (incoming().diff(existing()).affectedKeys().hasAny(['displayName', 'photoURL', 'status', 'chatBackground', 'privacy', 'notificationSounds', 'sessionVersion', 'friends', 'blockedUsers', 'magicUnlockedAt', 'animatedColorsUnlockedAt', 'nameColor', 'reels', 'reelsCount', 'lastReelAt']))
+        (incoming().diff(existing()).affectedKeys().hasAny(['displayName', 'photoURL', 'status', 'chatBackground', 'privacy', 'notificationSounds', 'sessionVersion', 'friends', 'friendDetails', 'blockedUsers', 'isVerified', 'verifiedAt', 'magicUnlockedAt', 'magic2UnlockedAt', 'magic3UnlockedAt', 'magic4UnlockedAt', 'magicIraqUnlockedAt', 'animatedColorsUnlockedAt', 'nameColor', 'reels', 'reelsCount', 'lastReelAt']))
       );
 
       match /userReels/{reelId} {
@@ -150,7 +156,7 @@ service cloud.firestore {
       allow create: if isValidId(chatId) && isAuthenticated() && request.auth.uid in incoming().participants && isValidChat(incoming());
       allow update: if isParticipant() && (
         (incoming().diff(existing()).affectedKeys().hasOnly(['typing'])) ||
-        (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt', 'hiddenFor', 'call'])) ||
+        (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt', 'hiddenFor', 'call', 'participantProfiles'])) ||
         (isChatAdmin() && incoming().diff(existing()).affectedKeys().hasAny(['groupName', 'groupPhoto', 'admins', 'memberRoles', 'isLocked', 'participants']))
       );
       allow delete: if isParticipant() && (!('isGroup' in resource.data) || !resource.data.isGroup || (('admins' in resource.data) && request.auth.uid in resource.data.admins));

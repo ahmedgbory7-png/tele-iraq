@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '@/firebase';
-import { doc, updateDoc, getDoc, query, collection, where, getDocs, addDoc, serverTimestamp, orderBy, onSnapshot, deleteDoc, increment } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, query, collection, where, getDocs, addDoc, serverTimestamp, orderBy, onSnapshot, deleteDoc, increment, writeBatch } from 'firebase/firestore';
 import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { ArrowRight, Camera, Check, Loader2, Lock, Plus, Trash2, Play, MessageSquare, User } from 'lucide-react';
+import { ArrowRight, Camera, Check, Loader2, Lock, Plus, Trash2, Play, MessageSquare, User, BadgeCheck } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion, AnimatePresence } from 'motion/react';
@@ -37,6 +37,7 @@ export function Profile() {
           setStatus(data.status || '');
           setPhotoURL(data.photoURL || '');
           setNameColor(data.nameColor || '#141414');
+          setIsVerified(!!data.isVerified);
         }
         setIsOtherProfileLoading(false);
       });
@@ -46,6 +47,7 @@ export function Profile() {
       setStatus(profile.status || '');
       setPhotoURL(profile.photoURL || '');
       setNameColor(profile.nameColor || '#141414');
+      setIsVerified(!!profile.isVerified);
     }
   }, [viewingProfileId, profile]);
   
@@ -56,6 +58,7 @@ export function Profile() {
   const [status, setStatus] = useState('');
   const [photoURL, setPhotoURL] = useState('');
   const [nameColor, setNameColor] = useState('#141414');
+  const [isVerified, setIsVerified] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
   
@@ -165,29 +168,7 @@ export function Profile() {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [magicCode, setMagicCode] = useState('');
   const [pendingMagicColor, setPendingMagicColor] = useState<string | null>(null);
-  const [isReelsOpen, setIsReelsOpen] = useState(false);
-  const [reelCaption, setReelCaption] = useState('');
-  const [reelUrl, setReelUrl] = useState('');
-  const [uploadingReel, setUploadingReel] = useState(false);
   const [isMagicDialogOpen, setIsMagicDialogOpen] = useState(false);
-
-  const [userReels, setUserReels] = useState<any[]>([]);
-
-  useEffect(() => {
-    const uid = viewingProfileId || profile?.uid;
-    if (!uid) return;
-
-    const q = query(
-      collection(db, 'users', uid, 'userReels'),
-      orderBy('createdAt', 'desc')
-    );
-    
-    const unsubscribe = onSnapshot(q, (snap) => {
-      setUserReels(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    return () => unsubscribe();
-  }, [viewingProfileId, profile?.uid]);
 
   const formatLastSeen = (p: UserProfile | null) => {
     if (!p) return 'متصل منذ وقت طويل';
@@ -231,11 +212,39 @@ export function Profile() {
     '#eab308', '#f97316', '#d946ef', '#1d4ed8'
   ];
 
+  const propagateProfileUpdate = async (userData: Partial<UserProfile>) => {
+    if (!profile?.uid) return;
+    try {
+      const batch = writeBatch(db);
+      const chatsQ = query(collection(db, 'chats'), where('participants', 'array-contains', profile.uid));
+      const chatsSnap = await getDocs(chatsQ);
+      
+      const isVerifiedStatus = userData.isVerified !== undefined ? userData.isVerified : (isVerified || false);
+
+      chatsSnap.docs.forEach(d => {
+        batch.update(d.ref, {
+          [`participantProfiles.${profile.uid}`]: {
+            displayName: userData.displayName || displayName || profile.displayName || 'مستخدم',
+            photoURL: userData.photoURL || photoURL || profile.photoURL || '',
+            nameColor: userData.nameColor || nameColor || profile.nameColor || '',
+            isVerified: isVerifiedStatus,
+            phoneNumber: profile.phoneNumber || ''
+          }
+        });
+      });
+
+      await batch.commit();
+    } catch (err) {
+      console.error("Error propagating profile update:", err);
+    }
+  };
+
   const handleColorClick = (color: string) => {
     setNameColor(color);
     // Auto-save color change if we have the profile
     if (profile?.uid) {
       updateDoc(doc(db, 'users', profile.uid), { nameColor: color })
+        .then(() => propagateProfileUpdate({ nameColor: color }))
         .catch(err => console.error("Auto-save color error:", err));
     }
   };
@@ -267,6 +276,7 @@ export function Profile() {
           magicIraqUnlockedAt: serverTimestamp(),
           nameColor: newColor
         });
+        await propagateProfileUpdate({ nameColor: newColor });
         setIsMagicUnlocked(true);
         setIsMagic2Unlocked(true);
         setIsMagic3Unlocked(true);
@@ -285,6 +295,24 @@ export function Profile() {
       } finally {
         setLoading(false);
       }
+    } else if (code === '500') {
+      try {
+        setLoading(true);
+        await updateDoc(doc(db, 'users', profile.uid), {
+          isVerified: true,
+          verifiedAt: serverTimestamp()
+        });
+        setIsVerified(true);
+        await propagateProfileUpdate({ isVerified: true });
+        setIsMagicDialogOpen(false);
+        setMagicCode('');
+        alert('✔️ تم توثيق حسابك بنجاح! تظهر الآن علامة التوثيق الزرقاء بجانب اسمك.');
+      } catch (err) {
+        console.error(err);
+        alert('فشل توثيق الحساب.');
+      } finally {
+        setLoading(false);
+      }
     } else {
       alert('الكود غير صحيح! يرجى التأكد من الكود والمحاولة مرة أخرى.');
     }
@@ -297,14 +325,20 @@ export function Profile() {
     }
     setLoading(true);
     try {
+      // Ensure we don't accidentally lose verification status
+      const currentVerifiedStatus = isVerified || !!profile.isVerified;
+      
       const updatedData = {
         displayName: displayName.trim() || profile.displayName || 'مستخدم تليعراق',
         status: status.trim() || profile.status || 'أنا أستخدم تليعراق!',
         photoURL,
-        nameColor
+        nameColor,
+        isVerified: currentVerifiedStatus
       };
       
       await updateDoc(doc(db, 'users', profile.uid), updatedData);
+      setIsVerified(currentVerifiedStatus); // Sync local state
+      await propagateProfileUpdate(updatedData);
       setSaved(true);
       alert('✅ تم حفظ التغييرات في ملفك الشخصي بنجاح!');
       setTimeout(() => setSaved(false), 2000);
@@ -323,136 +357,17 @@ export function Profile() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 800 * 1024) {
-        alert('حجم الصورة كبير جداً. يرجى اختيار صورة أقل من 800 كيلوبايت.');
+      // 1MB is the strict Firestore limit for the entire document
+      if (file.size > 950 * 1024) {
+        alert('الملف كبير جداً. الحد الأقصى للجودة العالية هو 1 ميجابايت لضمان المزامنة.');
         return;
       }
       const reader = new FileReader();
       reader.onloadend = () => {
-        const img = new Image();
-        img.src = reader.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-          const maxDimension = 500; // Reduced from 600
-
-          if (width > height) {
-            if (width > maxDimension) {
-              height *= maxDimension / width;
-              width = maxDimension;
-            }
-          } else {
-            if (height > maxDimension) {
-              width *= maxDimension / height;
-              height = maxDimension;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          setPhotoURL(canvas.toDataURL('image/jpeg', 0.6)); // Reduced quality
-        };
+        // No resizing for 8K quality, storing raw base64
+        setPhotoURL(reader.result as string);
       };
       reader.readAsDataURL(file);
-    }
-  };
-
-  const handleReelFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Limit base64 storage to ~800KB final string size
-    if (file.size > 800 * 1024) {
-      alert('حجم الملف كبير جداً. يرجى اختيار فيديو أو صورة أقل من 800 كيلوبايت لضمان النشر بنجاح.');
-      return;
-    }
-
-    setUploadingReel(true);
-    const isVideo = file.type.startsWith('video/');
-    const reader = new FileReader();
-
-    reader.onload = async (event) => {
-      const result = event.target?.result as string;
-      
-      if (!isVideo) {
-        // Resize image
-        const img = new Image();
-        img.src = result;
-        img.onload = async () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-          const maxDim = 800; // Reduced from 1080
-          if (width > height) {
-            if (width > maxDim) { height *= maxDim / width; width = maxDim; }
-          } else {
-            if (height > maxDim) { width *= maxDim / height; height = maxDim; }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          setReelUrl(canvas.toDataURL('image/jpeg', 0.5)); // Reduced quality
-        };
-      } else {
-        setReelUrl(result);
-      }
-      setUploadingReel(false);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleAddReel = async () => {
-    if (!reelUrl) return;
-    
-    // Safety check for Firestore document size limit (1MB)
-    if (reelUrl.length > 900 * 1024) {
-      alert('الملف كبير جداً ليتم حفظه في قاعدة البيانات. يرجى اختيار ملف أصغر.');
-      setUploadingReel(false);
-      return;
-    }
-
-    setUploadingReel(true);
-    try {
-      const reelData = {
-        url: reelUrl.trim(),
-        caption: reelCaption.trim(),
-        createdAt: serverTimestamp(),
-        userId: profile.uid
-      };
-      
-      await addDoc(collection(db, 'users', profile.uid, 'userReels'), reelData);
-      
-      await updateDoc(doc(db, 'users', profile.uid), {
-        reelsCount: increment(1),
-        lastReelAt: serverTimestamp()
-      });
-      
-      setReelUrl('');
-      setReelCaption('');
-      setIsReelsOpen(false);
-    } catch (err) {
-      console.error(err);
-      alert('فشل إضافة الريلز');
-    } finally {
-      setUploadingReel(false);
-    }
-  };
-
-  const handleDeleteReel = async (reelId: string) => {
-    if (!profile?.uid) return;
-    if (!window.confirm('هل أنت متأكد من حذف هذا الريلز؟')) return;
-    try {
-      await deleteDoc(doc(db, 'users', profile.uid, 'userReels', reelId));
-      await updateDoc(doc(db, 'users', profile.uid), {
-        reelsCount: increment(-1)
-      });
-    } catch (err) {
-      console.error(err);
-      alert('فشل حذف الريلز');
     }
   };
 
@@ -528,13 +443,13 @@ export function Profile() {
           </div>
         </div>
 
-        <div className="absolute bottom-6 inset-x-6 flex flex-col items-start text-white">
+        <div className="absolute bottom-6 inset-x-6 flex flex-col items-center text-white text-center">
           <motion.div 
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="flex flex-col gap-1"
+            className="flex flex-col items-center gap-1"
           >
-            <h1 className={`text-3xl font-bold tracking-tight ${
+            <h1 className={`text-3xl font-bold tracking-tight flex items-center gap-1.5 ${
               nameColor === 'magic' ? 'magic-color-text' : 
               nameColor === 'magic_neon' ? 'magic-neon-orange-text' : 
               nameColor === 'magic_rb' ? 'magic-red-blue-text' : 
@@ -542,6 +457,14 @@ export function Profile() {
               nameColor === 'magic_iraq' ? 'magic-iraq-text' : ''
             }`} style={{ color: (nameColor === 'magic' || nameColor === 'magic_neon' || nameColor === 'magic_rb' || nameColor === 'magic_pb' || nameColor === 'magic_iraq') ? undefined : nameColor === '#141414' ? 'white' : nameColor }}>
               {displayName || 'مستخدم جديد'}
+              {isVerified ? (
+                <BadgeCheck className="w-6 h-6 text-blue-500 fill-blue-500/10" />
+              ) : isMe && (
+                <BadgeCheck 
+                  className="w-6 h-6 text-white/30 cursor-pointer hover:text-white/50 transition-colors" 
+                  onClick={() => setIsMagicDialogOpen(true)}
+                />
+              )}
             </h1>
             <p className="text-white/60 text-sm font-medium">{formatLastSeen(currentProfile)}</p>
           </motion.div>
@@ -556,34 +479,37 @@ export function Profile() {
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        <Tabs defaultValue="info" className="w-full">
-          <TabsList className="w-full h-12 bg-card border-b rounded-none p-0 flex sticky top-0 z-20 shadow-sm">
-            <TabsTrigger value="info" className="flex-1 h-full rounded-none data-[state=active]:bg-primary/5 data-[state=active]:border-b-2 data-[state=active]:border-primary transition-all font-bold">الحساب</TabsTrigger>
-            <TabsTrigger value="reels" className="flex-1 h-full rounded-none data-[state=active]:bg-primary/5 data-[state=active]:border-b-2 data-[state=active]:border-primary transition-all font-bold">الوسائط والمقاطع</TabsTrigger>
-          </TabsList>
+      <div className="flex-1 overflow-y-auto pb-24">
+        <section className="bg-card">
+          <div className="p-6 space-y-8 flex flex-col items-center text-center">
+            <div className="w-full max-w-sm space-y-6">
+              <div className="flex flex-col items-center gap-2 border-b border-border/40 pb-6 w-full">
+                <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">رقم الهاتف</span>
+                <span className="text-lg font-bold text-primary">{currentProfile.phoneNumber}</span>
+              </div>
 
-          <TabsContent value="info" className="mt-0 outline-none pb-20">
-            <section className="bg-card border-y">
-              <div className="p-4 space-y-4">
-                <div className="flex items-center justify-between group cursor-pointer border-b pb-4 last:border-0 last:pb-0">
-                  <div className="flex flex-col flex-1">
-                    <span className="text-sm font-semibold">{currentProfile.phoneNumber}</span>
-                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">رقم الهاتف</span>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2 border-b pb-4">
-                  <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">الاسم المستعار</label>
-                  {isMe ? (
+              <div className="flex flex-col items-center gap-3 border-b border-border/40 pb-6 w-full">
+                <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">الاسم المستعار</label>
+                {isMe ? (
+                  <div className="flex items-center gap-2 w-full justify-center">
                     <Input
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
                       placeholder="أدخل اسمك..."
-                      className="h-10 bg-muted/20 border-border/40 rounded-xl text-right font-medium"
+                      className="h-12 bg-muted/20 border-border/40 rounded-2xl text-center font-bold text-lg flex-1"
                     />
-                  ) : (
-                    <p className={`font-bold ${
+                    {isVerified ? (
+                      <BadgeCheck className="w-6 h-6 text-blue-500 fill-blue-500/20 shrink-0" />
+                    ) : (
+                      <BadgeCheck 
+                        className="w-6 h-6 text-muted-foreground/30 cursor-pointer hover:text-muted-foreground/50 transition-colors shrink-0" 
+                        onClick={() => setIsMagicDialogOpen(true)}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center gap-1.5">
+                    <p className={`text-xl font-bold ${
                       (currentProfile.nameColor === 'magic' || currentProfile.nameColor === 'magic_neon' || currentProfile.nameColor === 'magic_rb' || currentProfile.nameColor === 'magic_pb' || currentProfile.nameColor === 'magic_iraq') 
                         ? (
                             currentProfile.nameColor === 'magic' ? 'magic-color-text' : 
@@ -595,320 +521,218 @@ export function Profile() {
                     }`} style={{ color: (currentProfile.nameColor === 'magic' || currentProfile.nameColor === 'magic_neon' || currentProfile.nameColor === 'magic_rb' || currentProfile.nameColor === 'magic_pb' || currentProfile.nameColor === 'magic_iraq') ? undefined : (currentProfile.nameColor || 'inherit') }}>
                       {currentProfile.displayName}
                     </p>
-                  )}
-                </div>
+                    {currentProfile.isVerified && <BadgeCheck className="w-5 h-5 text-blue-500" />}
+                  </div>
+                )}
+              </div>
 
-                <div className="flex flex-col gap-2 border-b pb-4">
-                  <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">النبذة التعريفية</label>
-                  {isMe ? (
-                    <Input
-                      value={status}
-                      onChange={(e) => setStatus(e.target.value)}
-                      placeholder="اكتب شيئاً عنك..."
-                      className="h-10 bg-muted/20 border-border/40 rounded-xl text-right font-medium"
+              <div className="flex flex-col items-center gap-3 border-b border-border/40 pb-6 w-full">
+                <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">النبذة التعريفية</label>
+                {isMe ? (
+                  <Input
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    placeholder="اكتب شيئاً عنك..."
+                    className="h-12 bg-muted/20 border-border/40 rounded-2xl text-center font-medium"
+                  />
+                ) : (
+                  <p className="font-medium text-muted-foreground text-center text-sm px-4">{currentProfile.status}</p>
+                )}
+              </div>
+
+              <div className="flex flex-col items-center gap-4 border-b border-border/40 pb-6 w-full">
+                <div 
+                  className="flex flex-col items-center gap-2 cursor-pointer w-full"
+                  onClick={() => isMe && setShowColorPicker(!showColorPicker)}
+                >
+                  <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">لون الاسم</label>
+                  <div className="flex items-center gap-3 bg-muted/30 px-6 py-3 rounded-2xl border border-border/20 shadow-sm transition-all hover:bg-muted/50">
+                    <div 
+                      className={`w-8 h-8 rounded-full border-2 border-white/20 shadow-inner ${
+                        nameColor === 'magic' ? 'magic-color-bg' : 
+                        nameColor === 'magic_neon' ? 'magic-neon-orange-bg' : 
+                        nameColor === 'magic_rb' ? 'magic-red-blue-bg' : 
+                        nameColor === 'magic_pb' ? 'magic-pink-black-bg' : 
+                        nameColor === 'magic_iraq' ? 'magic-iraq-bg' : ''
+                      }`} 
+                      style={{ backgroundColor: (nameColor === 'magic' || nameColor === 'magic_neon' || nameColor === 'magic_rb' || nameColor === 'magic_pb' || nameColor === 'magic_iraq') ? undefined : nameColor }}
                     />
-                  ) : (
-                    <p className="font-medium text-muted-foreground">{currentProfile.status}</p>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-2 border-b pb-4">
-                  <div 
-                    className="flex items-center justify-between cursor-pointer"
-                    onClick={() => isMe && setShowColorPicker(!showColorPicker)}
-                  >
-                    <div className="flex flex-col">
-                      <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">لون الاسم</span>
-                      <div className="flex items-center gap-2">
-                        <div 
-                          className={`w-6 h-6 rounded-full border border-white/20 ${
-                            nameColor === 'magic' ? 'magic-color-bg' : 
-                            nameColor === 'magic_neon' ? 'magic-neon-orange-bg' : 
-                            nameColor === 'magic_rb' ? 'magic-red-blue-bg' : 
-                            nameColor === 'magic_pb' ? 'magic-pink-black-bg' : 
-                            nameColor === 'magic_iraq' ? 'magic-iraq-bg' : ''
-                          }`} 
-                          style={{ backgroundColor: (nameColor === 'magic' || nameColor === 'magic_neon' || nameColor === 'magic_rb' || nameColor === 'magic_pb' || nameColor === 'magic_iraq') ? undefined : nameColor }}
-                        />
-                        <span className={`font-bold text-sm ${
-                          nameColor === 'magic' ? 'magic-color-text' : 
-                          nameColor === 'magic_neon' ? 'magic-neon-orange-text' : 
-                          nameColor === 'magic_rb' ? 'magic-red-blue-text' : 
-                          nameColor === 'magic_pb' ? 'magic-pink-black-text' : 
-                          nameColor === 'magic_iraq' ? 'magic-iraq-text' : ''
-                        }`} style={{ color: (nameColor === 'magic' || nameColor === 'magic_neon' || nameColor === 'magic_rb' || nameColor === 'magic_pb' || nameColor === 'magic_iraq') ? undefined : nameColor }}>
-                          {nameColor === 'magic' ? 'سحري (RGB)' : 
-                           nameColor === 'magic_neon' ? 'سحري (فسفوري)' : 
-                           nameColor === 'magic_rb' ? 'سحري (أحمر وأزرق)' : 
-                           nameColor === 'magic_pb' ? 'سحري (وردي وأسود)' : 
-                           nameColor === 'magic_iraq' ? 'سحري (عـلم العراق)' : 'لون مخصص'}
-                        </span>
-                      </div>
-                    </div>
+                    <span className={`font-black text-base drop-shadow-sm ${
+                      nameColor === 'magic' ? 'magic-color-text' : 
+                      nameColor === 'magic_neon' ? 'magic-neon-orange-text' : 
+                      nameColor === 'magic_rb' ? 'magic-red-blue-text' : 
+                      nameColor === 'magic_pb' ? 'magic-pink-black-text' : 
+                      nameColor === 'magic_iraq' ? 'magic-iraq-text' : ''
+                    }`} style={{ color: (nameColor === 'magic' || nameColor === 'magic_neon' || nameColor === 'magic_rb' || nameColor === 'magic_pb' || nameColor === 'magic_iraq') ? undefined : nameColor }}>
+                      {nameColor === 'magic' ? 'سحري (RGB)' : 
+                       nameColor === 'magic_neon' ? 'سحري (فسفوري)' : 
+                       nameColor === 'magic_rb' ? 'سحري (أحمر وأزرق)' : 
+                       nameColor === 'magic_pb' ? 'سحري (وردي وأسود)' : 
+                       nameColor === 'magic_iraq' ? 'سحري (عـلم العراق)' : 'لون مخصص'}
+                    </span>
                     {isMe && (
                       <motion.div animate={{ rotate: showColorPicker ? 180 : 0 }}>
-                        <ArrowRight className="h-5 w-5 text-muted-foreground rotate-90" />
+                        <ArrowRight className="h-4 w-4 text-primary rotate-90" />
                       </motion.div>
                     )}
                   </div>
-
-                  <AnimatePresence>
-                    {isMe && showColorPicker && (
-                      <motion.div 
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="overflow-hidden space-y-4 pt-4"
-                      >
-                        <div className="flex flex-wrap gap-2 justify-start">
-                          {colors.map(color => (
-                            <button
-                              key={color}
-                              onClick={() => handleColorClick(color)}
-                              className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 active:scale-90 ${nameColor === color ? 'border-primary ring-2 ring-primary/20 shadow-lg' : 'border-transparent'}`}
-                              style={{ backgroundColor: color }}
-                            />
-                          ))}
-                        </div>
-
-                        <div className="flex flex-wrap gap-2 justify-start mt-4">
-                          <button
-                            onClick={() => handleMagicColorClick('magic', isMagicUnlocked)}
-                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
-                          >
-                            <div className={`absolute inset-0 magic-color-bg opacity-40 ${!isMagicUnlocked ? 'grayscale blur-[1px]' : ''}`} />
-                            {isMagicUnlocked ? (
-                              <>
-                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (RGB)</span>
-                                {remainingDaysMagic !== null && (
-                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagic} يوم</span>
-                                )}
-                              </>
-                            ) : (
-                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
-                            )}
-                          </button>
-
-                          <button
-                            onClick={() => handleMagicColorClick('magic_neon', isMagic2Unlocked)}
-                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic_neon' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
-                          >
-                            <div className={`absolute inset-0 magic-neon-orange-bg opacity-40 ${!isMagic2Unlocked ? 'grayscale blur-[1px]' : ''}`} />
-                            {isMagic2Unlocked ? (
-                              <>
-                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (فسفوري)</span>
-                                {remainingDaysMagic2 !== null && (
-                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagic2} يوم</span>
-                                )}
-                              </>
-                            ) : (
-                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
-                            )}
-                          </button>
-
-                          <button
-                            onClick={() => handleMagicColorClick('magic_rb', isMagic3Unlocked)}
-                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic_rb' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
-                          >
-                            <div className={`absolute inset-0 magic-red-blue-bg opacity-40 ${!isMagic3Unlocked ? 'grayscale blur-[1px]' : ''}`} />
-                            {isMagic3Unlocked ? (
-                              <>
-                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (أحمر وأزرق)</span>
-                                {remainingDaysMagic3 !== null && (
-                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagic3} يوم</span>
-                                )}
-                              </>
-                            ) : (
-                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
-                            )}
-                          </button>
-
-                          <button
-                            onClick={() => handleMagicColorClick('magic_pb', isMagic4Unlocked)}
-                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic_pb' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
-                          >
-                            <div className={`absolute inset-0 magic-pink-black-bg opacity-40 ${!isMagic4Unlocked ? 'grayscale blur-[1px]' : ''}`} />
-                            {isMagic4Unlocked ? (
-                              <>
-                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (وردي وأسود)</span>
-                                {remainingDaysMagic4 !== null && (
-                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagic4} يوم</span>
-                                )}
-                              </>
-                            ) : (
-                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
-                            )}
-                          </button>
-
-                          <button
-                            onClick={() => handleMagicColorClick('magic_iraq', isMagicIraqUnlocked)}
-                            className={`group relative w-32 h-12 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-105 active:scale-95 ${nameColor === 'magic_iraq' ? 'border-primary ring-4 ring-primary/20 shadow-lg' : 'border-dashed border-muted-foreground/30'}`}
-                          >
-                            <div className={`absolute inset-0 magic-iraq-bg opacity-40 ${!isMagicIraqUnlocked ? 'grayscale blur-[1px]' : ''}`} />
-                            {isMagicIraqUnlocked ? (
-                              <>
-                                <span className="relative text-[10px] font-bold text-primary dark:text-white z-10 drop-shadow-sm">سحري (علم العراق)</span>
-                                {remainingDaysMagicIraq !== null && (
-                                  <span className="relative text-[8px] font-bold text-muted-foreground z-10">{remainingDaysMagicIraq} يوم</span>
-                                )}
-                              </>
-                            ) : (
-                              <Lock className="relative h-4 w-4 text-muted-foreground z-10" />
-                            )}
-                          </button>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
                 </div>
-              </div>
-            </section>
-            
-            <div className="p-4 flex flex-col gap-4">
-              {isMe ? (
-                <>
-                  <p className="text-[10px] text-muted-foreground text-center font-medium">سيتمكن الآخرون من رؤية معلوماتك ولون اسمك المميز في المحادثات.</p>
-                  <Button 
-                    onClick={handleSave} 
-                    className={`w-full h-14 text-lg font-bold rounded-2xl transition-all shadow-xl active:scale-[0.98] ${saved ? 'bg-green-500 hover:bg-green-600' : 'purple-gradient'}`}
-                    disabled={loading}
-                  >
-                    {loading ? <Loader2 className="animate-spin ml-2 h-5 w-5" /> : saved ? <Check className="ml-2 h-5 w-5" /> : null}
-                    {saved ? 'تم حفظ ملفك الشخصي' : 'حفظ المعلومات كاملة'}
-                  </Button>
-                  
-                  <div className="bg-muted/50 p-4 rounded-2xl border border-dashed border-primary/20 mt-2">
-                    <p className="text-[11px] font-bold text-primary text-center mb-1">- لشراء الالوان المتحركة التواصل عبر الواتساب -</p>
-                    <p className="text-[12px] font-bold text-foreground text-center">07745121483 ابو وطن</p>
-                  </div>
-                </>
-              ) : (
-                <div className="bg-primary/5 p-4 rounded-2xl">
-                   <p className="text-center text-sm font-medium text-primary">أنت تشاهد الملف الشخصي لـ {currentProfile.displayName}</p>
-                </div>
-              )}
-            </div>
-          </TabsContent>
 
-          <TabsContent value="reels" className="mt-0 outline-none p-4">
-            <div className="flex flex-col gap-4">
-              {isMe && (
-                <Button 
-                  onClick={() => setIsReelsOpen(true)}
-                  className="w-full h-14 rounded-2xl border-2 border-dashed border-primary/30 text-primary hover:bg-primary/5 transition-all flex items-center justify-center gap-2 font-bold bg-transparent"
-                >
-                  <Plus className="w-5 h-5" />
-                  إضافة ريلز جديد
-                </Button>
-              )}
-
-              <div className="grid grid-cols-2 gap-3 pb-20">
-                {userReels && userReels.length > 0 ? (
-                  userReels.map((reel) => (
-                    <div key={reel.id} className="relative aspect-[9/16] rounded-2xl overflow-hidden bg-muted shadow-lg group">
-                      {reel.url.startsWith('data:video') ? (
-                        <video 
-                          src={reel.url} 
-                          className="w-full h-full object-cover"
-                          controls={false}
-                        />
-                      ) : (
-                        <img 
-                          src={reel.url} 
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex flex-col justify-end p-3">
-                        {reel.caption && <p className="text-white text-[10px] line-clamp-2 mb-1">{reel.caption}</p>}
-                        <div className="flex justify-between items-center gap-2">
-                          {isMe && (
-                            <Button 
-                              variant="destructive" 
-                              size="icon" 
-                              className="h-8 w-8 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={() => handleDeleteReel(reel.id)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
-                          <div className={`h-8 w-8 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center ${!isMe ? 'mr-auto' : ''}`}>
-                            <Play className="w-4 h-4 text-white fill-white" />
-                          </div>
-                        </div>
+                <AnimatePresence>
+                  {isMe && showColorPicker && (
+                    <motion.div 
+                      initial={{ height: 0, opacity: 0, y: -20 }}
+                      animate={{ height: 'auto', opacity: 1, y: 0 }}
+                      exit={{ height: 0, opacity: 0, y: -20 }}
+                      className="overflow-hidden space-y-6 pt-4 w-full"
+                    >
+                      <div className="flex flex-wrap gap-3 justify-center">
+                        {colors.map(color => (
+                          <button
+                            key={color}
+                            onClick={() => handleColorClick(color)}
+                            className={`w-10 h-10 rounded-full border-4 transition-all hover:scale-110 active:scale-90 shadow-sm ${nameColor === color ? 'border-primary ring-4 ring-primary/20 shadow-lg scale-110' : 'border-transparent'}`}
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
                       </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="col-span-2 py-20 text-center space-y-4 opacity-50">
-                    <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto">
-                      <Play className="w-8 h-8 text-muted-foreground" />
-                    </div>
-                    <p className="text-sm font-medium">لا توجد حالات ريلز حالياً</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </TabsContent>
-        </Tabs>
-      </div>
 
-      <Dialog open={isReelsOpen} onOpenChange={setIsReelsOpen}>
-        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto" dir="rtl">
-          <DialogHeader>
-            <DialogTitle>إضافة حالة ريلز 🎬</DialogTitle>
-          </DialogHeader>
-          <div className="py-4 space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-semibold">اختر من الاستوديو</label>
-              <div 
-                className="w-full aspect-[9/16] max-h-[40vh] bg-muted rounded-2xl border-2 border-dashed border-primary/20 flex flex-col items-center justify-center gap-4 cursor-pointer overflow-hidden relative mx-auto"
-                onClick={() => document.getElementById('reel-video-upload')?.click()}
-              >
-                {reelUrl ? (
-                  reelUrl.startsWith('data:video') ? (
-                    <video src={reelUrl} className="w-full h-full object-cover" />
-                  ) : (
-                    <img src={reelUrl} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  )
-                ) : (
-                  <>
-                    <Play className="w-12 h-12 text-primary/40" />
-                    <p className="text-xs text-muted-foreground">اضغط لاختيار فيديو أو صورة</p>
-                  </>
-                )}
-                <input 
-                  id="reel-video-upload"
-                  type="file" 
-                  className="hidden" 
-                  accept="video/*,image/*" 
-                  onChange={handleReelFileChange} 
-                />
-                {uploadingReel && (
-                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                    <Loader2 className="w-8 h-8 animate-spin text-white" />
-                  </div>
-                )}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 justify-center mt-6">
+                        <button
+                          onClick={() => handleMagicColorClick('magic', isMagicUnlocked)}
+                          className={`group relative w-full h-14 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-[1.02] active:scale-[0.98] ${nameColor === 'magic' ? 'border-primary ring-4 ring-primary/20 shadow-xl' : 'border-dashed border-muted-foreground/30'}`}
+                        >
+                          <div className={`absolute inset-0 magic-color-bg opacity-40 ${!isMagicUnlocked ? 'grayscale blur-[1px]' : ''}`} />
+                          {isMagicUnlocked ? (
+                            <>
+                              <span className="relative text-xs font-black text-primary dark:text-white z-10 drop-shadow-md">سحري (RGB)</span>
+                              {remainingDaysMagic !== null && (
+                                <span className="relative text-[10px] font-bold text-muted-foreground z-10 tracking-wider">{remainingDaysMagic} يوم متبقي</span>
+                              )}
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-2 relative z-10">
+                              <Lock className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-xs font-bold text-muted-foreground">سحري (RGB)</span>
+                            </div>
+                          )}
+                        </button>
+
+                        <button
+                          onClick={() => handleMagicColorClick('magic_neon', isMagic2Unlocked)}
+                          className={`group relative w-full h-14 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-[1.02] active:scale-[0.98] ${nameColor === 'magic_neon' ? 'border-primary ring-4 ring-primary/20 shadow-xl' : 'border-dashed border-muted-foreground/30'}`}
+                        >
+                          <div className={`absolute inset-0 magic-neon-orange-bg opacity-40 ${!isMagic2Unlocked ? 'grayscale blur-[1px]' : ''}`} />
+                          {isMagic2Unlocked ? (
+                            <>
+                              <span className="relative text-xs font-black text-primary dark:text-white z-10 drop-shadow-md">سحري (فسفوري)</span>
+                              {remainingDaysMagic2 !== null && (
+                                <span className="relative text-[10px] font-bold text-muted-foreground z-10 tracking-wider">{remainingDaysMagic2} يوم متبقي</span>
+                              )}
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-2 relative z-10">
+                              <Lock className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-xs font-bold text-muted-foreground">سحري (فسفوري)</span>
+                            </div>
+                          )}
+                        </button>
+
+                        <button
+                          onClick={() => handleMagicColorClick('magic_rb', isMagic3Unlocked)}
+                          className={`group relative w-full h-14 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-[1.02] active:scale-[0.98] ${nameColor === 'magic_rb' ? 'border-primary ring-4 ring-primary/20 shadow-xl' : 'border-dashed border-muted-foreground/30'}`}
+                        >
+                          <div className={`absolute inset-0 magic-red-blue-bg opacity-40 ${!isMagic3Unlocked ? 'grayscale blur-[1px]' : ''}`} />
+                          {isMagic3Unlocked ? (
+                            <>
+                              <span className="relative text-xs font-black text-primary dark:text-white z-10 drop-shadow-md">سحري (أحمر وأزرق)</span>
+                              {remainingDaysMagic3 !== null && (
+                                <span className="relative text-[10px] font-bold text-muted-foreground z-10 tracking-wider">{remainingDaysMagic3} يوم متبقي</span>
+                              )}
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-2 relative z-10">
+                              <Lock className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-xs font-bold text-muted-foreground">سحري (أحمر وأزرق)</span>
+                            </div>
+                          )}
+                        </button>
+
+                        <button
+                          onClick={() => handleMagicColorClick('magic_pb', isMagic4Unlocked)}
+                          className={`group relative w-full h-14 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-[1.02] active:scale-[0.98] ${nameColor === 'magic_pb' ? 'border-primary ring-4 ring-primary/20 shadow-xl' : 'border-dashed border-muted-foreground/30'}`}
+                        >
+                          <div className={`absolute inset-0 magic-pink-black-bg opacity-40 ${!isMagic4Unlocked ? 'grayscale blur-[1px]' : ''}`} />
+                          {isMagic4Unlocked ? (
+                            <>
+                              <span className="relative text-xs font-black text-primary dark:text-white z-10 drop-shadow-md">سحري (وردي وأسود)</span>
+                              {remainingDaysMagic4 !== null && (
+                                <span className="relative text-[10px] font-bold text-muted-foreground z-10 tracking-wider">{remainingDaysMagic4} يوم متبقي</span>
+                              )}
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-2 relative z-10">
+                              <Lock className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-xs font-bold text-muted-foreground">سحري (وردي وأسود)</span>
+                            </div>
+                          )}
+                        </button>
+
+                        <button
+                          onClick={() => handleMagicColorClick('magic_iraq', isMagicIraqUnlocked)}
+                          className={`group relative w-full h-14 rounded-2xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden hover:scale-[1.02] active:scale-[0.98] ${nameColor === 'magic_iraq' ? 'border-primary ring-4 ring-primary/20 shadow-xl' : 'border-dashed border-muted-foreground/30'}`}
+                        >
+                          <div className={`absolute inset-0 magic-iraq-bg opacity-40 ${!isMagicIraqUnlocked ? 'grayscale blur-[1px]' : ''}`} />
+                          {isMagicIraqUnlocked ? (
+                            <>
+                              <span className="relative text-xs font-black text-primary dark:text-white z-10 drop-shadow-md">سحري (ألوان علم العراق)</span>
+                              {remainingDaysMagicIraq !== null && (
+                                <span className="relative text-[10px] font-bold text-muted-foreground z-10 tracking-wider">{remainingDaysMagicIraq} يوم متبقي</span>
+                              )}
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-2 relative z-10">
+                              <Lock className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-xs font-bold text-muted-foreground">سحري (ألوان علم العراق)</span>
+                            </div>
+                          )}
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold">وصف الريلز (اختياري)</label>
-              <Input 
-                placeholder="ماذا تريد أن تكتب؟" 
-                value={reelCaption}
-                onChange={(e) => setReelCaption(e.target.value)}
-                className="h-12 rounded-xl"
-              />
             </div>
           </div>
-          <DialogFooter className="flex flex-row gap-2 sm:justify-end sticky bottom-0 bg-background pt-2">
-            <Button variant="outline" onClick={() => setIsReelsOpen(false)} className="flex-1 rounded-xl">إلغاء</Button>
-            <Button onClick={handleAddReel} className="flex-1 rounded-xl purple-gradient" disabled={uploadingReel || !reelUrl}>
-              {uploadingReel ? <Loader2 className="animate-spin w-4 h-4" /> : 'إضافة'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </section>
+        
+        <div className="p-6 flex flex-col gap-6 max-w-sm mx-auto">
+          {isMe ? (
+            <>
+              <Button 
+                onClick={handleSave} 
+                className={`w-full h-16 text-xl font-black rounded-2xl transition-all shadow-2xl active:scale-[0.95] ${saved ? 'bg-green-500 hover:bg-green-600' : 'purple-gradient'}`}
+                disabled={loading}
+              >
+                {loading ? <Loader2 className="animate-spin ml-2 h-6 w-6" /> : saved ? <Check className="ml-2 h-6 w-6" /> : null}
+                {saved ? 'تم الحفظ بنجاح' : 'حفظ المعلومات كاملة'}
+              </Button>
+              
+              <div className="bg-primary/10 p-6 rounded-3xl border-2 border-dashed border-primary/30 flex flex-col items-center gap-3">
+                <p className="text-[12px] font-black text-primary text-center leading-relaxed">لشراء الألوان السحرية المميزة وتفعيل الحساب الكامل التواصل عبر الواتساب</p>
+                <div className="flex items-center gap-2 bg-primary/20 px-4 py-2 rounded-xl border border-primary/30">
+                  <span className="text-lg font-black text-primary">07745121483</span>
+                  <span className="text-sm font-bold opacity-70">أبو وطن</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="bg-primary/5 p-6 rounded-3xl border border-primary/10">
+               <p className="text-center text-base font-bold text-primary">أنت تشاهد الملف الشخصي لـ {currentProfile.displayName}</p>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Magic Dialog */}
       <Dialog open={isMagicDialogOpen} onOpenChange={setIsMagicDialogOpen}>

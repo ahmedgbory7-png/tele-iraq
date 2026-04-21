@@ -18,8 +18,16 @@ export interface UserProfile {
   chatBackground?: string;
   magicUnlockedAt?: any;
   animatedColorsUnlockedAt?: any;
+  isVerified?: boolean;
+  verifiedAt?: any;
   sessionVersion?: number;
   friends?: string[];
+  friendDetails?: { [uid: string]: {
+    displayName?: string;
+    photoURL?: string;
+    nameColor?: string;
+    isVerified?: boolean;
+  } };
 }
 
 export interface Chat {
@@ -45,6 +53,13 @@ export interface Chat {
   isLocked?: boolean;
   typing?: { [userId: string]: boolean };
   hiddenFor?: string[]; // Array of UIDs who have hidden/deleted the chat for themselves
+  participantProfiles?: { [userId: string]: {
+    displayName?: string;
+    photoURL?: string;
+    nameColor?: string;
+    isVerified?: boolean;
+    phoneNumber?: string;
+  } };
   call?: {
     type: 'voice' | 'video';
     callerId: string;
