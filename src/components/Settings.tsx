@@ -193,7 +193,7 @@ export function Settings() {
             onClick={onOpenProfile}
           >
             <Avatar className="h-16 w-16 border-2 border-primary/20 shadow-md">
-              <AvatarImage src={profile.photoURL} />
+              <AvatarImage src={profile.photoURL || undefined} />
               <AvatarFallback className="text-xl text-white font-bold" style={{ backgroundColor: profile.nameColor }}>
                 {profile.displayName?.slice(0, 2).toUpperCase()}
               </AvatarFallback>

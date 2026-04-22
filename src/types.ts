@@ -81,36 +81,18 @@ export interface Message {
   read?: boolean;
   reactions?: { [emoji: string]: string[] }; // emoji -> list of userIds
   gameId?: string;
-  gameType?: 'dominoes' | 'ludo';
+  gameType?: 'ludo' | 'tawla';
   replyTo?: { id: string; text: string; senderName: string };
   isEdited?: boolean;
 }
 
-export interface DominoGame {
+export interface TawlaGame {
   id: string;
-  type: 'dominoes';
-  status: 'waiting' | 'playing' | 'finished';
-  players: string[];
-  turn: string;
-  board: {
-    left: number;
-    right: number;
-    pieces: { value: { a: number; b: number }; side: 'left' | 'right' }[];
-  };
-  hands: { [uid: string]: { a: number; b: number }[] };
-  boneyard: { a: number; b: number }[];
-  winner: string | null;
-  updatedAt: any;
-}
-
-export interface LudoGame {
-  id: string;
-  type: 'ludo';
+  type: 'tawla';
   status: 'playing' | 'finished';
   players: string[];
   turn: string;
-  positions: { [userId: string]: number[] }; // 4 pieces per player
-  diceValue: number;
+  diceValue: number[] | null;
   winner: string | null;
   updatedAt: any;
 }

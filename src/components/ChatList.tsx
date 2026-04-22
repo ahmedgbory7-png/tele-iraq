@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '@/firebase';
 import { collection, query, where, onSnapshot, orderBy, limit, getDocs, addDoc, serverTimestamp, or, doc, getDoc, setDoc, deleteDoc, arrayUnion, arrayRemove, deleteField, updateDoc, writeBatch } from 'firebase/firestore';
 import { Chat, UserProfile } from '@/types';
@@ -13,6 +13,7 @@ import { Language, translations } from '@/lib/i18n';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { motion, AnimatePresence } from 'motion/react';
+import { Virtuoso, GroupedVirtuoso } from 'react-virtuoso';
 
 import { ar } from 'date-fns/locale';
 import { useStore } from '@/store/useStore';
@@ -45,6 +46,47 @@ export function ChatList() {
   const [isDeletingChat, setIsDeletingChat] = useState<string | null>(null);
   const [confirmDeleteType, setConfirmDeleteType] = useState<'me' | 'everyone' | null>(null);
   const [friendReels, setFriendReels] = useState<{ userId: string; displayName: string; photoURL?: string; reelsCount: number }[]>([]);
+
+  // Memoized contacts sorting and grouping
+  const contactsData = useMemo(() => {
+    const list = [...(searchQuery.length > 0 ? searchResults : contacts)];
+    
+    // Improved sorting for Arabic
+    list.sort((a, b) => {
+      const nameA = (a.displayName || '').replace(/^الـ|^ال/g, ''); // Skip Al- prefix for sorting
+      const nameB = (b.displayName || '').replace(/^الـ|^ال/g, '');
+      return nameA.localeCompare(nameB, 'ar');
+    });
+
+    const counts: number[] = [];
+    const groupLetters: string[] = [];
+    let currentCount = 0;
+    let currentLetter = '';
+
+    list.forEach((user, idx) => {
+      let name = user.displayName || '#';
+      // Normalize Alif variations for grouping
+      let letter = name.replace(/^الـ|^ال/g, '')[0]?.toUpperCase() || '#';
+      if (/[أإآ]/.test(letter)) letter = 'ا';
+
+      if (idx === 0) {
+        currentLetter = letter;
+        currentCount = 1;
+        groupLetters.push(letter);
+      } else if (letter === currentLetter) {
+        currentCount++;
+      } else {
+        counts.push(currentCount);
+        currentLetter = letter;
+        currentCount = 1;
+        groupLetters.push(letter);
+      }
+    });
+
+    if (currentCount > 0) counts.push(currentCount);
+
+    return { list, counts, groupLetters };
+  }, [searchQuery, searchResults, contacts]);
 
   const handleDeleteForEveryone = async (chatId: string) => {
     try {
@@ -191,7 +233,7 @@ export function ChatList() {
       try {
         const chatData = snapshot.docs
           .map(doc => ({ id: doc.id, ...doc.data() } as Chat))
-          .filter(c => !c.hiddenFor?.includes(currentUser.uid));
+          .filter(c => !(Array.isArray(c.hiddenFor) && c.hiddenFor.includes(currentUser.uid)));
         // Sort manually to avoid composite index requirement
         chatData.sort((a, b) => {
           const timeA = a.updatedAt?.toMillis?.() || 0;
@@ -384,9 +426,10 @@ export function ChatList() {
   };
 
   const toggleFriend = async (targetUid: string) => {
-    if (!currentUser) return;
+    if (!currentUser || !targetUid) return;
     setIsUpdatingFriend(targetUid);
-    const isFriend = currentUser.friends?.includes(targetUid);
+    const friendsArray = Array.isArray(currentUser.friends) ? currentUser.friends : [];
+    const isFriend = friendsArray.includes(targetUid);
     try {
       if (isFriend) {
         await updateDoc(doc(db, 'users', currentUser.uid), {
@@ -418,16 +461,24 @@ export function ChatList() {
   };
 
   const startChat = async (targetUser: UserProfile) => {
-    if (!currentUser) return;
+    if (!currentUser || !targetUser?.uid) return;
     
-    // Auto-add friend
-    if (!currentUser.friends?.includes(targetUser.uid)) {
+    // Auto-add friend with details denormalization for persistence
+    const friendsArray = Array.isArray(currentUser.friends) ? currentUser.friends : [];
+    if (!friendsArray.includes(targetUser.uid)) {
       await updateDoc(doc(db, 'users', currentUser.uid), {
-        friends: arrayUnion(targetUser.uid)
+        friends: arrayUnion(targetUser.uid),
+        [`friendDetails.${targetUser.uid}`]: {
+          uid: targetUser.uid,
+          displayName: targetUser.displayName || 'مستخدم تليعراق',
+          photoURL: targetUser.photoURL || null,
+          nameColor: targetUser.nameColor || 'white',
+          isVerified: !!targetUser.isVerified
+        }
       });
     }
 
-    const existingChat = (chats || []).find(c => c.participants.includes(targetUser.uid));
+    const existingChat = (chats || []).find(c => Array.isArray(c.participants) && c.participants.includes(targetUser.uid));
     if (existingChat) {
       setActiveChatId(existingChat.id);
       setIsSearching(false);
@@ -469,7 +520,7 @@ export function ChatList() {
   const createGroup = async () => {
     if (!currentUser || !groupName.trim() || selectedContacts.length === 0) return;
 
-    const groupParticipants = [currentUser, ...contacts.filter(c => selectedContacts.includes(c.uid))];
+    const groupParticipants = [currentUser, ...contacts.filter(c => Array.isArray(selectedContacts) && selectedContacts.includes(c.uid))];
     const newChat = {
       participants: groupParticipants.map(u => u.uid),
       participantProfiles: getParticipantProfiles(groupParticipants),
@@ -544,9 +595,10 @@ export function ChatList() {
       const systemUser: UserProfile = {
         uid: 'teleiraq-system',
         phoneNumber: '+964000000000',
-        displayName: 'نظام تليعراق',
-        status: 'الدعم الفني والآلي',
-        nameColor: '#8b5cf6',
+        displayName: 'تليعراق (الدعم الفني)',
+        status: 'دائماً في خدمتك 🇮🇶 تم تطويري بالذكاء الاصطناعي',
+        nameColor: 'magic_rb',
+        isVerified: true,
         photoURL: 'https://cdn-icons-png.flaticon.com/512/4712/4712035.png'
       };
       
@@ -597,10 +649,6 @@ export function ChatList() {
   };
 
   if (currentTab === 'contacts') {
-    const sortedContacts = [...(searchQuery.length > 0 ? searchResults : contacts)].sort((a, b) => 
-      (a.displayName || '').localeCompare(b.displayName || '', 'ar')
-    );
-
     return (
       <div className="flex flex-col h-full bg-card" dir="rtl">
         <div className="p-4 border-b flex items-center justify-between bg-background sticky top-0 z-10">
@@ -639,110 +687,112 @@ export function ChatList() {
           </div>
         )}
 
-      <div className="flex-1 overflow-y-auto no-scrollbar overscroll-contain">
-        <div className="p-2 space-y-1">
-          {/* Action Items */}
-            {!searchQuery && (
-              <div className="space-y-1 mb-4">
-                <Button variant="ghost" className="w-full justify-start gap-4 h-14 rounded-2xl px-4 hover:bg-orange-500/5 group" onClick={startSystemChat}>
-                  <div className="w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
-                    <Bot className="w-5 h-5" />
-                  </div>
-                  <span className="font-bold text-sm">الدعم الفني</span>
-                </Button>
+      <div className="flex-1 min-h-0 relative">
+        {contactsData.list.length > 0 ? (
+          <GroupedVirtuoso
+            style={{ height: '100%' }}
+            data={contactsData.list}
+            groupCounts={contactsData.counts}
+            groupContent={(index) => (
+              <div className="bg-muted/50 px-4 py-2 text-[10px] font-bold text-primary uppercase tracking-widest border-b backdrop-blur-sm sticky top-0">
+                {contactsData.groupLetters[index]}
               </div>
             )}
-
-            {/* List */}
-            {sortedContacts.length > 0 ? (
-              sortedContacts.map((user, idx) => {
-                const firstLetter = user.displayName?.[0]?.toUpperCase() || '#';
-                const showHeader = idx === 0 || sortedContacts[idx - 1].displayName?.[0]?.toUpperCase() !== firstLetter;
-
-                return (
-                  <div key={user.uid}>
-                    {showHeader && !searchQuery && (
-                      <div className="px-4 py-2 text-[10px] font-bold text-primary uppercase tracking-widest mt-2">{firstLetter}</div>
-                    )}
-                    <div
-                      key={user.uid}
-                      className="w-full flex items-center gap-4 p-3 rounded-2xl hover:bg-accent transition-all text-right cursor-pointer active:scale-[0.98]"
-                    >
-                      <Avatar 
-                        className="h-12 w-12 border-2 border-primary/10 shadow-sm hover:ring-2 ring-primary/30 transition-all cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setViewingProfileId(user.uid);
-                        }}
-                      >
-                        <AvatarImage src={user.photoURL || undefined} />
-                        <AvatarFallback style={{ backgroundColor: user.nameColor || '#8b5cf6' }} className="text-white font-bold text-sm">
-                          {user.displayName?.slice(0, 2).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0" onClick={() => startChat(user)}>
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <p className={`font-bold text-sm truncate ${
-                            user.nameColor === 'magic' ? 'magic-color-text' : 
-                            user.nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
-                            user.nameColor === 'animated-green' ? 'animated-green-text' :
-                            user.nameColor === 'animated-red' ? 'animated-red-text' : ''
-                          }`} style={{ color: ['magic', 'magic_neon', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || 'inherit') }}>
-                            {user.displayName}
-                          </p>
-                          {user.isVerified && <BadgeCheck className="w-3.5 h-3.5 text-blue-500 fill-blue-500/10 shrink-0" />}
-                        </div>
-                        <p className="text-[10px] text-muted-foreground truncate">{user.status || 'متوفر'}</p>
+            itemContent={(index, _, user) => (
+              <div className="p-2 pt-0 space-y-1">
+                {/* Action Items for the very first item if not searching */}
+                {index === 0 && !searchQuery && (
+                   <div className="space-y-1 mb-2 px-1">
+                    <Button variant="ghost" className="w-full justify-start gap-4 h-14 rounded-2xl px-4 hover:bg-orange-500/5 group transition-all" onClick={startSystemChat}>
+                      <div className="w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
+                        <Bot className="w-5 h-5" />
                       </div>
-                      
-                      <Button 
-                        variant={currentUser?.friends?.includes(user.uid) ? "ghost" : "outline"}
-                        size="sm"
-                        className={`rounded-xl h-8 px-3 shrink-0 gap-1 font-bold text-[10px] transition-all ios-touch ${
-                          currentUser?.friends?.includes(user.uid) 
-                            ? 'text-green-500 bg-green-500/10 hover:bg-green-500/20' 
-                            : 'text-primary border-primary/20 hover:bg-primary/5'
-                        }`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleFriend(user.uid);
-                        }}
-                        disabled={isUpdatingFriend === user.uid}
-                      >
-                        {isUpdatingFriend === user.uid ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : currentUser?.friends?.includes(user.uid) ? (
-                          <><Check className="w-3 h-3" /> صديق</>
-                        ) : (
-                          <><UserPlus className="w-3 h-3" /> إضافة</>
-                        )}
-                      </Button>
-                    </div>
+                      <div className="flex-1 text-right">
+                        <p className="font-black text-sm">الدعم الفني والخدمات</p>
+                        <p className="text-[10px] text-muted-foreground">تحدث مع موظف الخدمة فوراً</p>
+                      </div>
+                    </Button>
                   </div>
-                );
-              })
-            ) : (
-              <div className="py-20 text-center space-y-6 px-10">
-                <div className="w-20 h-20 bg-muted/30 rounded-full flex items-center justify-center mx-auto animate-pulse">
-                  <UserPlus className="w-10 h-10 text-muted-foreground/40" />
-                </div>
-                <div className="space-y-2">
-                  <p className="font-bold text-lg">لا يوجد جهات اتصال بعد</p>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    ابدأ بالبحث عن أصدقائك عبر الاسم أو رقم الهاتف لإضافتهم إلى قائمتك.
-                  </p>
-                </div>
-                <Button 
-                  onClick={() => setIsSearching(true)}
-                  className="rounded-2xl h-12 px-8 purple-gradient font-bold shadow-lg shadow-purple-500/20"
+                )}
+                <div
+                  key={user.uid}
+                  className="w-full flex items-center gap-4 p-3 rounded-2xl hover:bg-accent transition-all text-right cursor-pointer active:scale-[0.98]"
+                  onClick={() => startChat(user)}
                 >
-                  <Search className="w-4 h-4 ml-2" />
-                  البحث عن أصدقاء
-                </Button>
+                  <Avatar 
+                    className="h-12 w-12 border-2 border-primary/10 shadow-sm hover:ring-2 ring-primary/30 transition-all cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setViewingProfileId(user.uid);
+                    }}
+                  >
+                    <AvatarImage src={user.photoURL || undefined} />
+                    <AvatarFallback style={{ backgroundColor: user.nameColor || '#8b5cf6' }} className="text-white font-bold text-sm">
+                      {user.displayName?.slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <p className={`font-bold text-sm truncate ${
+                        user.nameColor === 'magic' ? 'magic-color-text' : 
+                        user.nameColor === 'magic_neon' ? 'magic-neon-orange-text' :
+                        user.nameColor === 'animated-green' ? 'animated-green-text' :
+                        user.nameColor === 'animated-red' ? 'animated-red-text' : ''
+                      }`} style={{ color: ['magic', 'magic_neon', 'animated-green', 'animated-red'].includes(user.nameColor || '') ? undefined : (user.nameColor || 'inherit') }}>
+                        {user.displayName}
+                      </p>
+                      {user.isVerified && <BadgeCheck className="w-3.5 h-3.5 text-blue-500 fill-blue-500/10 shrink-0" />}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground truncate">{user.status || 'متوفر'}</p>
+                  </div>
+                  
+                  <Button 
+                    variant={currentUser?.friends?.includes(user.uid) ? "ghost" : "outline"}
+                    size="sm"
+                    className={`rounded-xl h-8 px-3 shrink-0 gap-1 font-bold text-[10px] transition-all ios-touch ${
+                      currentUser?.friends?.includes(user.uid) 
+                        ? 'text-green-500 bg-green-500/10 hover:bg-green-500/20' 
+                        : 'text-primary border-primary/20 hover:bg-primary/5'
+                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFriend(user.uid);
+                    }}
+                    disabled={isUpdatingFriend === user.uid}
+                  >
+                    {isUpdatingFriend === user.uid ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : currentUser?.friends?.includes(user.uid) ? (
+                      <><Check className="w-3 h-3" /> صديق</>
+                    ) : (
+                      <><UserPlus className="w-3 h-3" /> إضافة</>
+                    )}
+                  </Button>
+                </div>
               </div>
             )}
+          />
+        ) : (
+          <div className="py-20 text-center space-y-6 px-10">
+            <div className="w-20 h-20 bg-muted/30 rounded-full flex items-center justify-center mx-auto animate-pulse">
+              <UserPlus className="w-10 h-10 text-muted-foreground/40" />
+            </div>
+            <div className="space-y-2">
+              <p className="font-bold text-lg">لا يوجد جهات اتصال بعد</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                ابدأ بالبحث عن أصدقائك عبر الاسم أو رقم الهاتف لإضافتهم إلى قائمتك.
+              </p>
+            </div>
+            <Button 
+              onClick={() => setIsSearching(true)}
+              className="rounded-2xl h-12 px-8 purple-gradient font-bold shadow-lg shadow-purple-500/20"
+            >
+              <Search className="w-4 h-4 ml-2" />
+              البحث عن أصدقاء
+            </Button>
           </div>
-        </div>
+        )}
+      </div>
       </div>
     );
   }
@@ -843,13 +893,28 @@ export function ChatList() {
       )}
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto no-scrollbar overscroll-contain">
-        <div className="p-2 space-y-1">
-          {isSearching || searchQuery.length >= 3 ? (
-            <div className="space-y-1">
-              <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t.searchResults}</p>
-              {searchResults.length > 0 ? (
-                searchResults.map(user => (
+      <div className="flex-1 min-h-0 relative">
+        <Virtuoso
+          style={{ height: '100%' }}
+          data={isSearching || searchQuery.length >= 3 ? searchResults : chats}
+          components={{
+            EmptyPlaceholder: () => (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center mt-20">
+                <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
+                  <Search className="w-8 h-8 text-muted-foreground/50" />
+                </div>
+                <p className="text-muted-foreground font-medium">
+                  {isSearching || searchQuery.length >= 3 ? t.noUsersFound : t.noChatsFound || 'لا توجد محادثات بعد'}
+                </p>
+              </div>
+            )
+          }}
+          itemContent={(index, item) => {
+            if (isSearching || searchQuery.length >= 3) {
+              const user = item as UserProfile;
+              return (
+                <div className="p-2">
+                  {index === 0 && <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t.searchResults}</p>}
                   <div
                     key={user.uid}
                     role="button"
@@ -917,13 +982,10 @@ export function ChatList() {
                       )}
                     </Button>
                   </div>
-                ))
-              ) : (
-                <p className="px-3 py-4 text-sm text-center text-muted-foreground">{t.noUsersFound}</p>
-              )}
-            </div>
-          ) : (
-            chats.map(chat => {
+                </div>
+              );
+            } else {
+              const chat = item as Chat;
               const isGroup = chat.isGroup;
               const otherParticipantId = !isGroup ? chat.participants.find(p => p !== currentUser?.uid) : null;
               const otherProfile = otherParticipantId ? otherProfiles[otherParticipantId] : null;
@@ -933,10 +995,10 @@ export function ChatList() {
               const nameColor = isGroup ? '#8b5cf6' : (otherProfile?.nameColor || '#8b5cf6');
 
               return (
-                <div key={chat.id} className="relative overflow-hidden rounded-xl">
-                  {/* Delete Action Background */}
-                  <div className="absolute inset-0 bg-destructive flex items-center justify-end px-6">
-                    <Trash2 className="h-5 w-5 text-white" />
+                <div key={chat.id} className="p-1 px-2 relative overflow-hidden rounded-xl">
+                  {/* Delete Action Background - Removed Red */}
+                  <div className="absolute inset-0 bg-primary/20 flex items-center justify-end px-6">
+                    <Trash2 className="h-5 w-5 text-primary" />
                   </div>
 
                   <motion.div
@@ -957,7 +1019,7 @@ export function ChatList() {
                     onClick={() => setActiveChatId(chat.id)}
                     onKeyDown={(e) => e.key === 'Enter' && setActiveChatId(chat.id)}
                     whileTap={{ scale: 0.98 }}
-                    className={`relative w-full flex items-center gap-3 p-3 transition-all text-right group cursor-pointer bg-card ios-touch ${
+                    className={`relative w-full flex items-center gap-3 p-3 transition-all text-right group cursor-pointer bg-card ios-touch rounded-xl ${
                       activeChatId === chat.id ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'hover:bg-accent'
                     }`}
                   >
@@ -1014,9 +1076,9 @@ export function ChatList() {
                   </motion.div>
                 </div>
               );
-            })
-          )}
-        </div>
+            }
+          }}
+        />
       </div>
 
       {/* Create Group Dialog */}

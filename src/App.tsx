@@ -275,7 +275,7 @@ export default function App() {
     };
   }, [user]);
 
-  const isSubPageActive = !!activeChatId || currentTab === 'profile' || currentTab === 'settings' || !!viewingProfileId;
+  const isSubPageActive = !!activeChatId || !!viewingProfileId;
 
   if (configError) {
     const handleClearAndReload = () => {
@@ -322,6 +322,10 @@ export default function App() {
         return <ChatList />;
       case 'contacts':
         return <div className="flex flex-col h-full bg-card"><ChatList /></div>;
+      case 'profile':
+        return <Profile />;
+      case 'settings':
+        return <Settings />;
       default:
         return <ChatList />;
     }
@@ -383,10 +387,6 @@ export default function App() {
         >
           {viewingProfileId ? (
             <Profile />
-          ) : currentTab === 'profile' ? (
-            <Profile />
-          ) : currentTab === 'settings' ? (
-            <Settings />
           ) : activeChatId ? (
             <ChatWindow chatId={activeChatId} onClose={closeSubPage} />
           ) : null}

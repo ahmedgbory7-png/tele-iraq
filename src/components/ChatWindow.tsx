@@ -6,14 +6,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare, BadgeCheck } from 'lucide-react';
+import { Send, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare, BadgeCheck, Plus, RotateCcw, Download } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { getSystemBotResponse } from '@/lib/gemini';
-import { DominoGame } from './DominoGame';
-import { LudoGame } from './LudoGame';
+import { TawlaGame } from './TawlaGame';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
 import { useStore } from '@/store/useStore';
@@ -47,6 +46,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [showGroupSettings, setShowGroupSettings] = useState(false);
   const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
+  const [viewingImageUrl, setViewingImageUrl] = useState<string | null>(null);
+  const [showGameCenter, setShowGameCenter] = useState(false);
   
   const [loadingMessages, setLoadingMessages] = useState(true);
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
@@ -486,22 +487,16 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     setNewMessage(prev => prev + emojiData.emoji);
   };
 
-  const createLudoGame = async () => {
+  const createTawlaGame = async () => {
     if (!currentUser || !chatData) return;
 
     const players = chatData.participants;
-    const initialPositions: { [uid: string]: number[] } = {};
-    players.forEach(pid => {
-      initialPositions[pid] = [0, 0, 0, 0];
-    });
-
     const gameData = {
-      type: 'ludo',
+      type: 'tawla',
       status: 'playing',
       players: players,
       turn: players[0],
-      positions: initialPositions,
-      diceValue: 0,
+      diceValue: null,
       winner: null,
       updatedAt: serverTimestamp()
     };
@@ -512,72 +507,16 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
       await addDoc(collection(db, 'chats', chatId, 'messages'), {
         chatId,
         senderId: currentUser.uid,
-        text: '🎲 بدأت مباراة ليدو جديدة! انقر للعب.',
+        text: '🎲 بدأت مباراة طاولي جديدة! ارمِ الزار.',
         type: 'text',
         gameId: gameRef.id,
-        gameType: 'ludo',
+        gameType: 'tawla',
         createdAt: serverTimestamp()
       });
 
       setActiveGameId(gameRef.id);
     } catch (err) {
-      console.error("Error creating ludo game:", err);
-    }
-  };
-
-  const createDominoGame = async () => {
-    if (!currentUser || !chatData) return;
-
-    // 1. Create 28 domino pieces as objects
-    const allPieces: { a: number; b: number }[] = [];
-    for (let i = 0; i <= 6; i++) {
-      for (let j = i; j <= 6; j++) {
-        allPieces.push({ a: i, b: j });
-      }
-    }
-
-    // 2. Shuffle
-    for (let i = allPieces.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [allPieces[i], allPieces[j]] = [allPieces[j], allPieces[i]];
-    }
-
-    // 3. Deal 7 to each player
-    const players = chatData.participants;
-    const hands: { [uid: string]: { a: number; b: number }[] } = {};
-    players.forEach((pid) => {
-      hands[pid] = allPieces.splice(0, 7);
-    });
-
-    const gameData = {
-      type: 'dominoes',
-      status: 'playing',
-      players: players,
-      turn: players[0],
-      board: { left: -1, right: -1, pieces: [] },
-      hands: hands,
-      boneyard: allPieces,
-      winner: null,
-      updatedAt: serverTimestamp()
-    };
-
-    try {
-      const gameRef = await addDoc(collection(db, 'games'), gameData);
-      
-      // Send a message to the chat about the game
-      await addDoc(collection(db, 'chats', chatId, 'messages'), {
-        chatId,
-        senderId: currentUser.uid,
-        text: '🀄 بدأت لعبة دومينا جديدة! انقر للعب.',
-        type: 'text',
-        gameId: gameRef.id,
-        gameType: 'dominoes',
-        createdAt: serverTimestamp()
-      });
-
-      setActiveGameId(gameRef.id);
-    } catch (err) {
-      console.error("Error creating game:", err);
+      console.error("Error creating tawla game:", err);
     }
   };
 
@@ -588,7 +527,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   };
 
   const toggleBlockUser = async () => {
-    if (!currentUser || !otherProfile) return;
+    if (!currentUser || !otherProfile || !otherProfile.uid) return;
     const isCurrentlyBlocked = currentUser.blockedUsers?.includes(otherProfile.uid);
     try {
       await updateDoc(doc(db, 'users', currentUser.uid), {
@@ -644,7 +583,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   };
 
   const addAdmin = async (uid: string, perms?: any) => {
-    if (!chatId || !isOwner) return;
+    if (!chatId || !isOwner || !uid) return;
     try {
       await updateDoc(doc(db, 'chats', chatId), {
         admins: arrayUnion(uid),
@@ -662,7 +601,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   };
 
   const removeAdmin = async (uid: string) => {
-    if (!chatId || !isOwner) return;
+    if (!chatId || !isOwner || !uid) return;
     try {
       await updateDoc(doc(db, 'chats', chatId), {
         admins: arrayRemove(uid),
@@ -685,7 +624,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   };
 
   const removeMember = async (uid: string) => {
-    if (!chatId || !myPermissions.canKick) return;
+    if (!chatId || !myPermissions.canKick || !uid) return;
     try {
       await updateDoc(doc(db, 'chats', chatId), {
         participants: arrayRemove(uid),
@@ -782,6 +721,18 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
           </motion.div>
         </div>
           <div className="flex items-center gap-1 relative">
+            {!chatData?.isGroup && (
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="rounded-full text-primary hover:bg-primary/10"
+                onClick={() => setShowGameCenter(true)}
+                title="مركز الألعاب"
+              >
+                <Gamepad2 className="h-6 w-6" />
+              </Button>
+            )}
+
             <Button 
               variant="ghost" 
               size="icon" 
@@ -859,20 +810,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                 </motion.div>
               )}
             </AnimatePresence>
-
-            {!chatData?.isGroup && (
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="rounded-full text-primary hover:bg-primary/10"
-              onClick={createDominoGame}
-              title="لعب دومينا"
-            >
-              <Gamepad2 className="h-5 w-5" />
-            </Button>
-          )}
+          </div>
         </div>
-      </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto no-scrollbar bg-transparent overscroll-contain">
@@ -896,7 +835,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
               messages.map((msg, idx) => {
               const isMe = msg.senderId === currentUser?.uid;
               const senderProfile = chatData?.isGroup ? participants[msg.senderId] : (isMe ? currentUser : otherProfile);
-              const showAvatar = !isMe && (idx === 0 || messages[idx - 1].senderId !== msg.senderId);
+              // Always show header for all messages as requested by user
+              const showAvatarHeader = !!senderProfile;
               const isLastInGroup = idx === messages.length - 1 || messages[idx + 1].senderId !== msg.senderId;
               
               return (
@@ -948,7 +888,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                       } ${!isLastInGroup ? (isMe ? 'rounded-br-2xl' : 'rounded-bl-2xl') : ''}`}
                     >
                       {/* Message Header: Avatar + Name (Requested by user) */}
-                      {showAvatar && (
+                      {showAvatarHeader && (
                         <div className={`flex items-center gap-2 mb-2 pb-1 border-b ${isMe ? 'border-white/10' : 'border-border/50'}`}>
                           <Avatar 
                             className="h-6 w-6 border border-white/10 cursor-pointer"
@@ -1021,23 +961,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         </div>
                       )}
                       
-                      {activeGameId && (msg as any).gameType === 'ludo' && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="mt-2"
-                        >
-                          <Button 
-                            className="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold rounded-xl gap-2 h-10 shadow-lg"
-                            onClick={() => setActiveGameId((msg as any).gameId)}
-                          >
-                            <Trophy className="w-4 h-4" />
-                            دخول مباراة اللودو
-                          </Button>
-                        </motion.div>
-                      )}
-                      
-                      {activeGameId && (msg as any).gameType === 'dominoes' && (
+                      {activeGameId && (msg as any).gameType === 'tawla' && (
                         <motion.div 
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
@@ -1048,13 +972,22 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                             onClick={() => setActiveGameId((msg as any).gameId)}
                           >
                             <Gamepad2 className="w-4 h-4" />
-                            دخول مباراة الدومينا
+                            دخول مباراة الطاولي
                           </Button>
                         </motion.div>
                       )}
                       {msg.type === 'image' && (
-                        <div className="rounded-lg overflow-hidden mb-1">
-                          <img src={msg.fileUrl || undefined} alt="Sent" className="max-w-full h-auto max-h-64 object-cover" referrerPolicy="no-referrer" />
+                        <div 
+                          className="rounded-lg overflow-hidden mb-1 cursor-pointer group relative"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewingImageUrl(msg.fileUrl || msg.text || null);
+                          }}
+                        >
+                          <img src={msg.fileUrl || undefined} alt="Sent" className="max-w-full h-auto max-h-64 object-cover transition-transform group-hover:scale-105" referrerPolicy="no-referrer" />
+                          <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <Plus className="w-8 h-8 text-white drop-shadow-lg" />
+                          </div>
                         </div>
                       )}
                       {msg.type === 'file' && (
@@ -1327,6 +1260,70 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         </form>
       </div>
 
+      {/* Game Center Dialog */}
+      <Dialog open={showGameCenter} onOpenChange={setShowGameCenter}>
+        <DialogContent className="max-w-md rounded-3xl p-0 overflow-hidden border-none bg-card shadow-2xl" dir="rtl">
+          <div className="p-6 space-y-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center">
+                  <Gamepad2 className="w-7 h-7 text-primary" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold">مركز ألعاب تليعراق</h3>
+                  <p className="text-xs text-muted-foreground">استمتع بأفضل الألعاب التراثية مع أصدقائك</p>
+                </div>
+              </div>
+              <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setShowGameCenter(false)}>
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              <motion.div 
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="group relative overflow-hidden rounded-2xl border bg-card hover:border-primary/50 transition-all cursor-pointer shadow-sm"
+                onClick={() => {
+                  createTawlaGame();
+                  setShowGameCenter(false);
+                }}
+              >
+                <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="p-4 flex gap-4">
+                  <div className="w-20 h-20 rounded-xl bg-orange-100 flex items-center justify-center shrink-0 shadow-inner">
+                    <RotateCcw className="w-10 h-10 text-orange-600" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h4 className="font-bold text-orange-700 font-sans tracking-tight">لعبة الطاولي</h4>
+                      <BadgeCheck className="w-4 h-4 text-orange-500" />
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      لعبة الطاولي العراقية الأصلية. تحدى أصدقائك في جولة من الذكاء والحظ. ارمِ الزار وابدأ التحدي الآن!
+                    </p>
+                    <div className="mt-3 flex items-center gap-2">
+                      <div className="flex -space-x-2 rtl:space-x-reverse">
+                        <div className="w-5 h-5 rounded-full border-2 border-background bg-slate-200" />
+                        <div className="w-5 h-5 rounded-full border-2 border-background bg-slate-300" />
+                      </div>
+                      <span className="text-[10px] font-medium text-orange-600/70">متوفرة للعب الجماعي</span>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+
+              <div className="p-4 rounded-2xl bg-muted/30 border border-dashed text-center">
+                <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest">المزيد من الألعاب قادمة قريباً</p>
+              </div>
+            </div>
+          </div>
+          <div className="p-4 bg-muted/50 border-t flex justify-center">
+            <p className="text-[10px] text-muted-foreground">تلعب الآن مع {otherProfile?.displayName || 'العضو الآخر'}</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Games Overlay */}
       <AnimatePresence>
         {activeGameId && (
@@ -1337,14 +1334,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
             className="absolute inset-0 z-[100] bg-background"
           >
-            {messages.find(m => (m as any).gameId === activeGameId)?.gameType === 'ludo' ? (
-              <LudoGame 
-                gameId={activeGameId} 
-                currentUser={currentUser} 
-                onClose={() => setActiveGameId(null)} 
-              />
-            ) : (
-              <DominoGame 
+            {activeGameId && (
+              <TawlaGame 
                 gameId={activeGameId} 
                 currentUser={currentUser} 
                 onClose={() => setActiveGameId(null)} 
@@ -1538,6 +1529,46 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             <Button variant="destructive" onClick={confirmDeleteMessage} className="rounded-xl flex-1 px-8 font-bold">حذف</Button>
             <Button variant="ghost" onClick={() => setDeletingMessageId(null)} className="rounded-xl flex-1 px-8">إلغاء</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Image Viewer Dialog */}
+      <Dialog open={!!viewingImageUrl} onOpenChange={() => setViewingImageUrl(null)}>
+        <DialogContent className="max-w-[95vw] max-h-[90vh] p-0 border-none bg-black/90 backdrop-blur-3xl overflow-hidden rounded-3xl" dir="rtl">
+          <div className="relative w-full h-full flex flex-col">
+            <div className="p-4 flex items-center justify-between absolute top-0 inset-x-0 z-10 bg-gradient-to-b from-black/60 to-transparent">
+               <div className="flex items-center gap-2">
+                 <Button variant="ghost" size="icon" onClick={() => setViewingImageUrl(null)} className="text-white hover:bg-white/20 rounded-full">
+                    <X className="w-6 h-6" />
+                 </Button>
+                 <span className="text-white font-bold text-sm">عرض الصورة</span>
+               </div>
+               <Button 
+                variant="ghost" 
+                className="text-white bg-white/10 hover:bg-white/20 rounded-xl gap-2 px-4"
+                onClick={() => {
+                  if(!viewingImageUrl) return;
+                  const link = document.createElement('a');
+                  link.href = viewingImageUrl;
+                  link.download = `teleiraq_image_${Date.now()}.png`;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                }}
+               >
+                 <Download className="w-5 h-5" />
+                 حفظ في الاستوديو
+               </Button>
+            </div>
+            
+            <div className="flex-1 flex items-center justify-center p-4">
+              <img 
+                src={viewingImageUrl || undefined} 
+                className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl" 
+                alt="Fullscreen"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
