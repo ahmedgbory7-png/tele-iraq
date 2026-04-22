@@ -29,6 +29,12 @@ export function TawlaGame({ gameId, currentUser, onClose }: TawlaGameProps) {
         onClose();
       }
       setLoading(false);
+    }, (error) => {
+      console.error("Game snapshot error:", error);
+      setLoading(false);
+      if (error.code === 'permission-denied') {
+        onClose();
+      }
     });
 
     return () => unsubscribe();

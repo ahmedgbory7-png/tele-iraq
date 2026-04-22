@@ -44,6 +44,7 @@ export default function App() {
 
   const lastNotificationTimeRef = useRef<number>(Date.now());
   const activeChatIdRef = useRef<string | null>(activeChatId);
+  const migrationAttemptedRef = useRef(false);
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -125,6 +126,8 @@ export default function App() {
           }
         }
       });
+    }, (error) => {
+      console.error("Global chats snapshot error:", error);
     });
 
     return () => unsubscribe();
@@ -193,11 +196,17 @@ export default function App() {
             const data = snapshot.data() as UserProfile;
             
             // Data migration for old users
-            if (!data.friends || !data.blockedUsers) {
-              await updateDoc(doc(db, 'users', firebaseUser.uid), {
-                friends: data.friends || [],
-                blockedUsers: data.blockedUsers || []
-              });
+            if ((data.friends === undefined || data.blockedUsers === undefined) && !migrationAttemptedRef.current) {
+              migrationAttemptedRef.current = true;
+              try {
+                await updateDoc(doc(db, 'users', firebaseUser.uid), {
+                  friends: data.friends || [],
+                  blockedUsers: data.blockedUsers || []
+                });
+              } catch (err) {
+                console.error("Migration write failed:", err);
+                // We leave migrationAttemptedRef as true to stop retrying immediately
+              }
               return; // Let the next snapshot trigger
             }
             const currentLocal = parseInt(localStorage.getItem(`session_${firebaseUser.uid}`) || '0');
@@ -250,11 +259,18 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     
+    let lastPresenceUpdate = 0;
+    const PRESENCE_COOLDOWN = 180000; // 3 minutes cooldown
+
     // Heartbeat for "Last Seen"
     const updatePresence = async () => {
       if (!user?.uid) return;
       if (document.visibilityState === 'visible') {
+        const now = Date.now();
+        if (now - lastPresenceUpdate < PRESENCE_COOLDOWN) return;
+        
         try {
+          lastPresenceUpdate = now;
           // Use setDoc with merge: true to avoid "not found" or permission errors if profile doesn't exist yet
           await setDoc(doc(db, 'users', user.uid), {
             lastSeen: serverTimestamp()
@@ -266,7 +282,7 @@ export default function App() {
     };
 
     updatePresence();
-    const interval = setInterval(updatePresence, 60000); // 1 minute
+    const interval = setInterval(updatePresence, 300000); // 5 minutes
     
     document.addEventListener('visibilitychange', updatePresence);
     return () => {

@@ -416,7 +416,10 @@ export function Profile() {
                     where('participants', 'array-contains', profile.uid)
                   );
                   const snap = await getDocs(q);
-                  const chat = snap.docs.find(d => (d.data() as any).participants.includes(targetUid));
+                  const chat = snap.docs.find(d => {
+                    const data = d.data() as any;
+                    return Array.isArray(data?.participants) && data.participants.includes(targetUid);
+                  });
                   if(chat) {
                     setActiveChatId(chat.id);
                     setViewingProfileId(null);

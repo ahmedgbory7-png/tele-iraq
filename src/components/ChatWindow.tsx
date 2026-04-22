@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/firebase';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc, arrayUnion, arrayRemove, deleteField, getDocs } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc, arrayUnion, arrayRemove, deleteField, getDocs, writeBatch } from 'firebase/firestore';
 import { Message, UserProfile, Chat } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
@@ -56,6 +56,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   const scrollRef = useRef<HTMLDivElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const typingStateRef = useRef<boolean>(false);
+  const pendingReadIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -92,6 +94,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             if (snapshot.exists()) {
               setOtherProfile(snapshot.data() as UserProfile);
             }
+          }, (err) => {
+            console.error("Other profile snapshot error:", err);
           });
         }
       } else {
@@ -142,21 +146,30 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
       setMessages(msgData);
       setLoadingMessages(false);
       
-      // Batch handle unread status to avoid excessive writes
+      // Batch handle unread status to avoid snapshot loop
       const unreadIds = msgData
-        .filter(msg => !msg.read && msg.senderId !== currentUser?.uid)
+        .filter(msg => !msg.read && msg.senderId !== currentUser?.uid && !pendingReadIds.current.has(msg.id))
         .map(msg => msg.id);
 
       if (unreadIds.length > 0) {
-        // Mark messages as read with a slight delay to avoid snapshot loops during burst loading
-        setTimeout(() => {
-          unreadIds.forEach(async (id) => {
-            try {
-              await updateDoc(doc(db, 'chats', chatId, 'messages', id), { read: true });
-            } catch (err) {
-              console.error("Error marking as read:", err);
-            }
+        unreadIds.forEach(id => pendingReadIds.current.add(id));
+        
+        // Wait 1s and commit
+        setTimeout(async () => {
+          if (unreadIds.length === 0) return;
+          const batch = writeBatch(db);
+          unreadIds.forEach((id) => {
+            batch.update(doc(db, 'chats', chatId, 'messages', id), { read: true });
           });
+          try {
+            await batch.commit();
+          } catch (err) {
+            console.error("Error marking as read (batch):", err);
+            // Don't remove from pending immediately to avoid hammering on quota error
+            setTimeout(() => {
+              unreadIds.forEach(id => pendingReadIds.current.delete(id));
+            }, 60000); // Wait 1 minute before allowing retry
+          }
         }, 1000);
       }
       
@@ -168,6 +181,9 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     }, (error) => {
       console.error("Messages snapshot error:", error);
       setLoadingMessages(false);
+      if (error.code === 'permission-denied') {
+        onClose();
+      }
     });
 
     // Listen for chat updates (typing, calls, etc)
@@ -184,6 +200,11 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         const typingIds = Object.keys(typing).filter(uid => typing[uid] && uid !== currentUser?.uid);
         setTypingUsers(typingIds);
       }
+    }, (error) => {
+      console.error("Chat snapshot error:", error);
+      if (error.code === 'permission-denied') {
+        onClose();
+      }
     });
 
     return () => {
@@ -194,8 +215,9 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   }, [chatId, currentUser]);
 
   const updateTypingStatus = async (isTyping: boolean) => {
-    if (!currentUser) return;
+    if (!currentUser || typingStateRef.current === isTyping) return;
     try {
+      typingStateRef.current = isTyping;
       await updateDoc(doc(db, 'chats', chatId), {
         [`typing.${currentUser.uid}`]: isTyping
       });
@@ -528,7 +550,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
 
   const toggleBlockUser = async () => {
     if (!currentUser || !otherProfile || !otherProfile.uid) return;
-    const isCurrentlyBlocked = currentUser.blockedUsers?.includes(otherProfile.uid);
+    const blockedArray = Array.isArray(currentUser.blockedUsers) ? currentUser.blockedUsers : [];
+    const isCurrentlyBlocked = blockedArray.includes(otherProfile.uid);
     try {
       await updateDoc(doc(db, 'users', currentUser.uid), {
         blockedUsers: isCurrentlyBlocked ? arrayRemove(otherProfile.uid) : arrayUnion(otherProfile.uid)

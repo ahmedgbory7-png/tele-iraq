@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db } from '@/firebase';
 import { collection, query, where, onSnapshot, orderBy, limit, getDocs, addDoc, serverTimestamp, or, doc, getDoc, setDoc, deleteDoc, arrayUnion, arrayRemove, deleteField, updateDoc, writeBatch } from 'firebase/firestore';
 import { Chat, UserProfile } from '@/types';
@@ -46,6 +46,7 @@ export function ChatList() {
   const [isDeletingChat, setIsDeletingChat] = useState<string | null>(null);
   const [confirmDeleteType, setConfirmDeleteType] = useState<'me' | 'everyone' | null>(null);
   const [friendReels, setFriendReels] = useState<{ userId: string; displayName: string; photoURL?: string; reelsCount: number }[]>([]);
+  const processedMissingIds = useRef<Set<string>>(new Set());
 
   // Memoized contacts sorting and grouping
   const contactsData = useMemo(() => {
@@ -181,33 +182,43 @@ export function ChatList() {
         });
 
         // 2. Fetch only missing friends (fallback for legacy data)
-        const missingIds = currentUser.friends.filter(id => id !== currentUser.uid && !detailsMap[id]);
+        const missingIds = currentUser.friends.filter(id => id && id !== currentUser.uid && !detailsMap[id] && !processedMissingIds.current.has(id));
         
         if (missingIds.length > 0) {
           const batchUpdates: Record<string, any> = {};
-          for (const friendId of missingIds) {
-            const friendDoc = await getDoc(doc(db, 'users', friendId));
-            if (friendDoc.exists()) {
-              const data = friendDoc.data() as UserProfile;
-              friendsProfiles.push(data);
-              
-              // Prepare for auto-denormalization
-              batchUpdates[`friendDetails.${friendId}`] = {
-                displayName: data.displayName || 'مستخدم',
-                photoURL: data.photoURL || '',
-                nameColor: data.nameColor || '',
-                isVerified: data.isVerified || false,
-                reelsCount: data.reelsCount || 0
-              };
+          // Mark as processed immediately to prevent loops
+          missingIds.forEach(id => processedMissingIds.current.add(id));
 
-              if (data.reelsCount && data.reelsCount > 0) {
-                reelsList.push({
-                  userId: data.uid,
+          for (const friendId of missingIds) {
+            try {
+              const friendDoc = await getDoc(doc(db, 'users', friendId));
+              if (friendDoc.exists()) {
+                const data = friendDoc.data() as UserProfile;
+                friendsProfiles.push(data);
+                
+                // Prepare for auto-denormalization
+                batchUpdates[`friendDetails.${friendId}`] = {
                   displayName: data.displayName || 'مستخدم',
-                  photoURL: data.photoURL,
-                  reelsCount: data.reelsCount
-                });
+                  photoURL: data.photoURL || '',
+                  nameColor: data.nameColor || '',
+                  isVerified: !!data.isVerified,
+                  reelsCount: data.reelsCount || 0
+                };
+
+                if (data.reelsCount && data.reelsCount > 0) {
+                  reelsList.push({
+                    userId: data.uid,
+                    displayName: data.displayName || 'مستخدم',
+                    photoURL: data.photoURL,
+                    reelsCount: data.reelsCount
+                  });
+                }
+              } else {
+                // Mark as non-existent to avoid retrying
+                batchUpdates[`friendDetails.${friendId}`] = { displayName: 'مستخدم غير موجود', photoURL: '', nameColor: '', isVerified: false, reelsCount: 0 };
               }
+            } catch (innerErr) {
+              console.error(`Error fetching profile for ${friendId}:`, innerErr);
             }
           }
           // Back-fill the denormalized data to user doc to save future reads
@@ -287,7 +298,7 @@ export function ChatList() {
     });
 
     return () => unsubscribe();
-  }, [currentUser?.uid, currentUser?.friends]);
+  }, [currentUser?.uid]);
 
   const handleSearch = async (val: string) => {
     setSearchQuery(val);
@@ -426,13 +437,17 @@ export function ChatList() {
   };
 
   const toggleFriend = async (targetUid: string) => {
-    if (!currentUser || !targetUid) return;
+    if (!currentUser?.uid || !targetUid) return;
     setIsUpdatingFriend(targetUid);
-    const friendsArray = Array.isArray(currentUser.friends) ? currentUser.friends : [];
-    const isFriend = friendsArray.includes(targetUid);
+    
     try {
+      const friendsArray = Array.isArray(currentUser.friends) ? currentUser.friends : [];
+      const isFriend = friendsArray.includes(targetUid);
+      
+      const userRef = doc(db, 'users', currentUser.uid);
+      
       if (isFriend) {
-        await updateDoc(doc(db, 'users', currentUser.uid), {
+        await updateDoc(userRef, {
           friends: arrayRemove(targetUid),
           [`friendDetails.${targetUid}`]: deleteField()
         });
@@ -441,7 +456,7 @@ export function ChatList() {
         const friendDoc = await getDoc(doc(db, 'users', targetUid));
         if (friendDoc.exists()) {
           const data = friendDoc.data() as UserProfile;
-          await updateDoc(doc(db, 'users', currentUser.uid), {
+          await updateDoc(userRef, {
             friends: arrayUnion(targetUid),
             [`friendDetails.${targetUid}`]: {
               displayName: data.displayName || 'مستخدم',
