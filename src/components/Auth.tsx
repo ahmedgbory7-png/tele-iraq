@@ -7,8 +7,6 @@ import { auth, db } from '@/firebase';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
-  GoogleAuthProvider, 
-  signInWithPopup,
   updateProfile
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -80,24 +78,6 @@ export function Auth() {
         setError('اسم المستخدم غير صالح. يرجى استخدام أحرف وأرقام فقط.');
       } else {
         setError(err.message || 'حدث خطأ أثناء تسجيل الدخول');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (err: any) {
-      console.error('Google sign in error:', err);
-      if (err.code === 'auth/popup-blocked') {
-        setError('تم حظر النافذة المنبثقة. يرجily السماح بالمنبثقات لهذا الموقع.');
-      } else {
-        setError(err.message || 'فشل تسجيل الدخول عبر جوجل');
       }
     } finally {
       setLoading(false);
@@ -191,28 +171,6 @@ export function Auth() {
                 {isLogin ? 'ليس لديك حساب؟ سجل الآن' : 'لديك حساب بالفعل؟ سجل دخولك'}
               </button>
             </div>
-
-            <div className="relative py-2">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-border" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">أو عبر جوجل</span>
-              </div>
-            </div>
-
-            <Button 
-              type="button"
-              variant="outline" 
-              onClick={handleGoogleSignIn} 
-              className="w-full h-12 text-base font-medium border-primary/20 hover:bg-primary/5 rounded-xl gap-2 transition-all transition-colors"
-              disabled={loading}
-            >
-              <div className="w-5 h-5 flex items-center justify-center">
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-full h-full" referrerPolicy="no-referrer" />
-              </div>
-              تسجيل الدخول عبر جوجل
-            </Button>
           </form>
           
           <p className="text-xs text-center text-muted-foreground px-6">

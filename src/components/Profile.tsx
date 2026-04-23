@@ -22,7 +22,21 @@ export function Profile() {
   const onClose = () => {
     setShowProfile(false);
     setViewingProfileId(null);
-    setCurrentTab('chats');
+    if (!profile) setCurrentTab('chats');
+  };
+
+  const getParticipantProfiles = (users: UserProfile[]) => {
+    const profiles: Record<string, any> = {};
+    users.forEach(u => {
+      profiles[u.uid] = {
+        displayName: u.displayName || 'مستخدم',
+        photoURL: u.photoURL || '',
+        nameColor: u.nameColor || '',
+        isVerified: u.isVerified || false,
+        phoneNumber: u.phoneNumber || ''
+      };
+    });
+    return profiles;
   };
 
   useEffect(() => {
@@ -427,6 +441,7 @@ export function Profile() {
                     // Create chat then open
                     const newChat = {
                       participants: [profile.uid, targetUid],
+                      participantProfiles: getParticipantProfiles([profile, currentProfile]),
                       updatedAt: serverTimestamp(),
                       lastMessage: {
                         text: 'بدأت محادثة جديدة',

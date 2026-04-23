@@ -23,10 +23,12 @@ import {
   Type,
   Image as ImageIcon,
   Plus,
-  Volume2
+  Volume2,
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, getDocs, deleteDoc, writeBatch } from 'firebase/firestore';
 import { Language, translations } from '@/lib/i18n';
 import { useStore } from '@/store/useStore';
 import { NOTIFICATION_SOUNDS, CHAT_BACKGROUND_PATTERNS } from '@/constants';
@@ -70,28 +72,49 @@ export function Settings() {
   const [notifications, setNotifications] = useState(() => JSON.parse(localStorage.getItem('app-notifications') || '{"private":true,"groups":true,"calls":true,"privateSound":"default","groupSound":"default"}'));
   const [dataUsage, setDataUsage] = useState(() => JSON.parse(localStorage.getItem('app-data-usage') || '{"autoDownload":true,"lowDataMode":false}'));
   const [isTerminating, setIsTerminating] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<NotificationPermission>(() => (typeof Notification !== 'undefined' ? Notification.permission : 'default'));
   
-  const [privacySettings, setPrivacySettings] = useState({
-    phoneNumber: profile.privacy?.phoneNumber || t.everyone,
-    lastSeen: profile.privacy?.lastSeen || t.everyone,
-    photo: profile.privacy?.photo || t.everyone
-  });
+  const resetSystem = async () => {
+    if (!window.confirm('⚠️ تنبيه هام: هل أنت متأكد من تصفير النظام بالكامل؟ سيتم مسح جميع المستخدمين والمحادثات نهائياً!')) return;
+    if (!window.confirm('تأكيد أخير: هذا الإجراء لا يمكن التراجع عنه. هل أنت متأكد؟')) return;
 
-  useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+    setIsResetting(true);
+    try {
+      // Delete users
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const batch = writeBatch(db);
+      usersSnap.forEach((d) => batch.delete(d.ref));
+      
+      // Delete chats
+      const chatsSnap = await getDocs(collection(db, 'chats'));
+      for (const cd of chatsSnap.docs) {
+        // Delete messages subcollection
+        const msgsSnap = await getDocs(collection(db, 'chats', cd.id, 'messages'));
+        const mBatch = writeBatch(db);
+        msgsSnap.forEach(m => mBatch.delete(m.ref));
+        await mBatch.commit();
+        batch.delete(cd.ref);
+      }
+
+      // Delete Reels
+      const reelsSnap = await getDocs(collection(db, 'reels'));
+      reelsSnap.forEach(d => batch.delete(d.ref));
+
+      // Delete Games
+      const gamesSnap = await getDocs(collection(db, 'tawla_games'));
+      gamesSnap.forEach(d => batch.delete(d.ref));
+      
+      await batch.commit();
+      alert('تم تصفير النظام ومسح جميع البيانات بنجاح. سيتم تسجيل خروجك الآن.');
+      auth.signOut();
+    } catch (err) {
+      console.error("Reset error:", err);
+      alert('حدث خطأ أثناء تصفير النظام. ربما تجاوزت حدود الكوتا.');
+    } finally {
+      setIsResetting(false);
     }
-  }, [isDarkMode]);
-
-  useEffect(() => {
-    document.documentElement.style.setProperty('--app-font-size', fontSize);
-    localStorage.setItem('app-font-size', fontSize);
-  }, [fontSize]);
+  };
 
   const updatePrivacy = async (key: string, value: string) => {
     const newSettings = { ...privacySettings, [key]: value };
@@ -263,6 +286,24 @@ export function Settings() {
               onClick={() => setShowLogoutDialog(true)}
             />
           </div>
+
+          {profile.email === 'ahmedgbory7@gmail.com' && (
+            <div className="pt-4 mt-4 border-t border-destructive/10">
+              <h4 className="text-xs font-bold text-destructive mb-3 px-4 uppercase tracking-widest">إعدادات المطور</h4>
+              <Button 
+                variant="outline" 
+                className="w-full h-12 rounded-xl text-destructive border-destructive/20 hover:bg-destructive/10 gap-2 font-bold"
+                onClick={resetSystem}
+                disabled={isResetting}
+              >
+                {isResetting ? <Loader2 className="animate-spin h-5 w-5" /> : <Trash2 className="h-5 w-5" />}
+                تصفير النظام بالكامل
+              </Button>
+              <p className="text-[10px] text-muted-foreground text-center mt-2 px-6">
+                سيقوم هذا الإجراء بمسح جميع المستخدمين والرسائل والمحادثات نهائياً من قاعدة البيانات.
+              </p>
+            </div>
+          )}
 
           <div className="text-center py-8">
             <p className="text-xs text-muted-foreground">تليعراق للأندرويد v1.0.0</p>

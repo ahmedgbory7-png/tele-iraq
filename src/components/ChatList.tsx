@@ -186,12 +186,12 @@ export function ChatList() {
         
         if (missingIds.length > 0) {
           const batchUpdates: Record<string, any> = {};
-          // Mark as processed immediately to prevent loops
-          missingIds.forEach(id => processedMissingIds.current.add(id));
 
           for (const friendId of missingIds) {
             try {
               const friendDoc = await getDoc(doc(db, 'users', friendId));
+              processedMissingIds.current.add(friendId);
+              
               if (friendDoc.exists()) {
                 const data = friendDoc.data() as UserProfile;
                 friendsProfiles.push(data);
@@ -298,7 +298,7 @@ export function ChatList() {
     });
 
     return () => unsubscribe();
-  }, [currentUser?.uid]);
+  }, [currentUser?.uid, currentUser?.friends]);
 
   const handleSearch = async (val: string) => {
     setSearchQuery(val);
