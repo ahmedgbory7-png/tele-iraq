@@ -17,6 +17,7 @@ interface AppState {
   notification: { chatId: string; senderName: string; text: string } | null;
   currentTab: 'chats' | 'contacts' | 'settings' | 'profile';
   viewingProfileId: string | null;
+  quotaExceeded: boolean;
 
   setUser: (user: User | null) => void;
   setProfile: (profile: UserProfile | null) => void;
@@ -30,6 +31,7 @@ interface AppState {
   setNotification: (notif: { chatId: string; senderName: string; text: string } | null) => void;
   setCurrentTab: (tab: 'chats' | 'contacts' | 'settings' | 'profile') => void;
   setViewingProfileId: (id: string | null) => void;
+  setQuotaExceeded: (exceeded: boolean) => void;
   
   resetApp: () => void;
 }
@@ -48,6 +50,7 @@ export const useStore = create<AppState>((set) => ({
   notification: null,
   currentTab: 'chats',
   viewingProfileId: null,
+  quotaExceeded: false,
 
   setUser: (user) => set({ user }),
   setProfile: (profile) => set({ profile }),
@@ -67,6 +70,7 @@ export const useStore = create<AppState>((set) => ({
   setNotification: (notification) => set({ notification }),
   setCurrentTab: (currentTab) => set({ currentTab }),
   setViewingProfileId: (viewingProfileId) => set({ viewingProfileId }),
+  setQuotaExceeded: (quotaExceeded) => set({ quotaExceeded }),
   
   resetApp: () => set({
     profile: null,
@@ -77,5 +81,6 @@ export const useStore = create<AppState>((set) => ({
     notification: null,
     currentTab: 'chats',
     viewingProfileId: null,
+    quotaExceeded: false,
   }),
 }));

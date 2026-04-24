@@ -47,6 +47,7 @@ type SettingsView = 'main' | 'privacy' | 'chats' | 'security' | 'notifications' 
 
 export function Settings() {
   const { 
+    user,
     profile, 
     setShowSettings, 
     setShowProfile, 
@@ -59,6 +60,7 @@ export function Settings() {
 
   const onClose = () => {
     setShowSettings(false);
+    setView('main'); // Reset to main view for next time
     setCurrentTab('chats');
   };
   const onOpenProfile = () => {
@@ -74,6 +76,7 @@ export function Settings() {
   const [isTerminating, setIsTerminating] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<NotificationPermission>(() => (typeof Notification !== 'undefined' ? Notification.permission : 'default'));
+  const [privacySettings, setPrivacySettings] = useState(() => profile.privacy || { phoneNumber: translations[language].everyone, lastSeen: translations[language].everyone, photo: translations[language].everyone });
   
   const resetSystem = async () => {
     if (!window.confirm('⚠️ تنبيه هام: هل أنت متأكد من تصفير النظام بالكامل؟ سيتم مسح جميع المستخدمين والمحادثات نهائياً!')) return;
@@ -102,7 +105,7 @@ export function Settings() {
       reelsSnap.forEach(d => batch.delete(d.ref));
 
       // Delete Games
-      const gamesSnap = await getDocs(collection(db, 'tawla_games'));
+      const gamesSnap = await getDocs(collection(db, 'games'));
       gamesSnap.forEach(d => batch.delete(d.ref));
       
       await batch.commit();
@@ -287,7 +290,7 @@ export function Settings() {
             />
           </div>
 
-          {profile.email === 'ahmedgbory7@gmail.com' && (
+          {user?.email === 'ahmedgbory7@gmail.com' && (
             <div className="pt-4 mt-4 border-t border-destructive/10">
               <h4 className="text-xs font-bold text-destructive mb-3 px-4 uppercase tracking-widest">إعدادات المطور</h4>
               <Button 
@@ -334,7 +337,7 @@ export function Settings() {
   );
 
   const renderPrivacy = () => (
-    <SubSettingsView title={t.privacy} onBack={() => setView('main')} language={language}>
+    <SubSettingsView title={t.privacy} onBack={() => setView('main')} language={language} isSubView={true}>
       <div className="space-y-6">
         <div className="bg-card rounded-2xl border overflow-hidden">
           <ToggleItem 
@@ -361,7 +364,7 @@ export function Settings() {
   );
 
   const renderSecurity = () => (
-    <SubSettingsView title={t.devices} onBack={() => setView('main')} language={language}>
+    <SubSettingsView title={t.devices} onBack={() => setView('main')} language={language} isSubView={true}>
       <div className="space-y-6">
         <div className="bg-card rounded-2xl border overflow-hidden p-4">
           <h3 className="font-bold text-primary mb-4">{t.thisDevice}</h3>
@@ -386,7 +389,7 @@ export function Settings() {
   );
 
   const renderLanguage = () => (
-    <SubSettingsView title={t.language} onBack={() => setView('main')} language={language}>
+    <SubSettingsView title={t.language} onBack={() => setView('main')} language={language} isSubView={true}>
       <div className="bg-card rounded-2xl border overflow-hidden">
         {['العربية', 'English', 'Kurdî'].map((lang) => (
           <button
@@ -403,7 +406,7 @@ export function Settings() {
   );
 
   const renderNotifications = () => (
-    <SubSettingsView title={t.notifications} onBack={() => setView('main')} language={language}>
+    <SubSettingsView title={t.notifications} onBack={() => setView('main')} language={language} isSubView={true}>
       <div className="space-y-6">
         <div className="bg-card rounded-2xl border overflow-hidden p-4 space-y-4">
           <div className="flex items-center gap-4">
@@ -562,7 +565,7 @@ export function Settings() {
   );
 
   const renderData = () => (
-    <SubSettingsView title={t.data} onBack={() => setView('main')} language={language}>
+    <SubSettingsView title={t.data} onBack={() => setView('main')} language={language} isSubView={true}>
       <div className="bg-card rounded-2xl border overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b">
           <div>
@@ -597,7 +600,7 @@ export function Settings() {
   );
 
   const renderChats = () => (
-    <SubSettingsView title={t.chats} onBack={() => setView('main')} language={language}>
+    <SubSettingsView title={t.chats} onBack={() => setView('main')} language={language} isSubView={true}>
       <div className="space-y-6">
         <div className="bg-card rounded-2xl border overflow-hidden p-2">
           <div className="flex items-center justify-between p-3">
@@ -743,7 +746,7 @@ function ToggleItem({ title, value, options, onChange }: { title: string, value:
   );
 }
 
-function SubSettingsView({ title, onBack, children, language }: { title: string, onBack: () => void, children: React.ReactNode, language: Language }) {
+function SubSettingsView({ title, onBack, children, language, isSubView }: { title: string, onBack: () => void, children: React.ReactNode, language: Language, isSubView?: boolean }) {
   return (
     <div className="flex flex-col h-full animate-in slide-in-from-left duration-200">
       <div className="p-4 flex items-center gap-4 border-b bg-card">

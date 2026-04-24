@@ -81,18 +81,20 @@ export interface Message {
   read?: boolean;
   reactions?: { [emoji: string]: string[] }; // emoji -> list of userIds
   gameId?: string;
-  gameType?: 'ludo' | 'tawla';
+  gameType?: 'ludo' | 'blackjack';
   replyTo?: { id: string; text: string; senderName: string };
   isEdited?: boolean;
 }
 
-export interface TawlaGame {
+export interface CardGame21 {
   id: string;
-  type: 'tawla';
+  type: 'blackjack';
   status: 'playing' | 'finished';
   players: string[];
   turn: string;
-  diceValue: number[] | null;
+  hands: { [uid: string]: string[] };
+  scores: { [uid: string]: number };
+  deck: string[];
   winner: string | null;
   updatedAt: any;
 }

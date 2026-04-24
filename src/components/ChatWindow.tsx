@@ -6,13 +6,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare, BadgeCheck, Plus, RotateCcw, Download } from 'lucide-react';
+import { Send, MoreVertical, Paperclip, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare, BadgeCheck, Plus, RotateCcw, Download, Coins } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { getSystemBotResponse } from '@/lib/gemini';
-import { TawlaGame } from './TawlaGame';
+import { CardGame21, createDeck } from './CardGame21';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
 import { useStore } from '@/store/useStore';
@@ -178,9 +178,12 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
           scrollRef.current.scrollIntoView({ behavior: 'smooth' });
         }
       }, 150);
-    }, (error) => {
+    }, (error: any) => {
       console.error("Messages snapshot error:", error);
       setLoadingMessages(false);
+      if (error.code === 'resource-exhausted' || error.message?.includes('quota')) {
+        useStore.getState().setQuotaExceeded(true);
+      }
       if (error.code === 'permission-denied') {
         onClose();
       }
@@ -195,13 +198,16 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         // Fetch profiles if they haven't been loaded yet
         if (!otherProfile && !data.isGroup) fetchProfiles(data);
         if (Object.keys(participants).length === 0 && data.isGroup) fetchProfiles(data);
-
+ 
         const typing = data.typing || {};
         const typingIds = Object.keys(typing).filter(uid => typing[uid] && uid !== currentUser?.uid);
         setTypingUsers(typingIds);
       }
-    }, (error) => {
+    }, (error: any) => {
       console.error("Chat snapshot error:", error);
+      if (error.code === 'resource-exhausted' || error.message?.includes('quota')) {
+        useStore.getState().setQuotaExceeded(true);
+      }
       if (error.code === 'permission-denied') {
         onClose();
       }
@@ -509,16 +515,29 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     setNewMessage(prev => prev + emojiData.emoji);
   };
 
-  const createTawlaGame = async () => {
+  const createCardGame21 = async () => {
     if (!currentUser || !chatData) return;
 
     const players = chatData.participants;
+    const deck = createDeck();
+    const hands: any = {};
+    const scores: any = {};
+    
+    // Deal 2 cards to each
+    players.forEach(uid => {
+      const h = [deck.pop()!, deck.pop()!];
+      hands[uid] = h;
+      scores[uid] = 0; // Will be calculated in component or here
+    });
+
     const gameData = {
-      type: 'tawla',
+      type: 'blackjack',
       status: 'playing',
       players: players,
       turn: players[0],
-      diceValue: null,
+      hands,
+      scores,
+      deck,
       winner: null,
       updatedAt: serverTimestamp()
     };
@@ -529,16 +548,16 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
       await addDoc(collection(db, 'chats', chatId, 'messages'), {
         chatId,
         senderId: currentUser.uid,
-        text: '🎲 بدأت مباراة طاولي جديدة! ارمِ الزار.',
+        text: '🃏 بدأت مباراة ورق 21 جديدة! من سيصل إلى 21 أولاً؟',
         type: 'text',
         gameId: gameRef.id,
-        gameType: 'tawla',
+        gameType: 'blackjack',
         createdAt: serverTimestamp()
       });
 
       setActiveGameId(gameRef.id);
     } catch (err) {
-      console.error("Error creating tawla game:", err);
+      console.error("Error creating card game:", err);
     }
   };
 
@@ -984,7 +1003,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         </div>
                       )}
                       
-                      {activeGameId && (msg as any).gameType === 'tawla' && (
+                      {activeGameId && (msg as any).gameType === 'blackjack' && (
                         <motion.div 
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
@@ -995,7 +1014,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                             onClick={() => setActiveGameId((msg as any).gameId)}
                           >
                             <Gamepad2 className="w-4 h-4" />
-                            دخول مباراة الطاولي
+                            دخول مباراة الورق
                           </Button>
                         </motion.div>
                       )}
@@ -1308,29 +1327,29 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                 whileTap={{ scale: 0.98 }}
                 className="group relative overflow-hidden rounded-2xl border bg-card hover:border-primary/50 transition-all cursor-pointer shadow-sm"
                 onClick={() => {
-                  createTawlaGame();
+                  createCardGame21();
                   setShowGameCenter(false);
                 }}
               >
-                <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className="p-4 flex gap-4">
-                  <div className="w-20 h-20 rounded-xl bg-orange-100 flex items-center justify-center shrink-0 shadow-inner">
-                    <RotateCcw className="w-10 h-10 text-orange-600" />
+                  <div className="w-20 h-20 rounded-xl bg-blue-100 flex items-center justify-center shrink-0 shadow-inner">
+                    <Coins className="w-10 h-10 text-blue-600" />
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-1">
-                      <h4 className="font-bold text-orange-700 font-sans tracking-tight">لعبة الطاولي</h4>
-                      <BadgeCheck className="w-4 h-4 text-orange-500" />
+                      <h4 className="font-bold text-blue-700 font-sans tracking-tight">لعبة الورق 21</h4>
+                      <BadgeCheck className="w-4 h-4 text-blue-500" />
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      لعبة الطاولي العراقية الأصلية. تحدى أصدقائك في جولة من الذكاء والحظ. ارمِ الزار وابدأ التحدي الآن!
+                      لعبة الورق الشهيرة 21 (بلاك جاك). حاول الوصول إلى الرقم 21 أو الاقتراب منه دون تجاوزه. هل ستخاطر وتسحب ورقة أخرى؟
                     </p>
                     <div className="mt-3 flex items-center gap-2">
                       <div className="flex -space-x-2 rtl:space-x-reverse">
                         <div className="w-5 h-5 rounded-full border-2 border-background bg-slate-200" />
                         <div className="w-5 h-5 rounded-full border-2 border-background bg-slate-300" />
                       </div>
-                      <span className="text-[10px] font-medium text-orange-600/70">متوفرة للعب الجماعي</span>
+                      <span className="text-[10px] font-medium text-blue-600/70">متوفرة للعب الجماعي</span>
                     </div>
                   </div>
                 </div>
@@ -1358,7 +1377,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             className="absolute inset-0 z-[100] bg-background"
           >
             {activeGameId && (
-              <TawlaGame 
+              <CardGame21 
                 gameId={activeGameId} 
                 currentUser={currentUser} 
                 onClose={() => setActiveGameId(null)} 

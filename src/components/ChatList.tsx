@@ -18,6 +18,9 @@ import { Virtuoso, GroupedVirtuoso } from 'react-virtuoso';
 import { ar } from 'date-fns/locale';
 import { useStore } from '@/store/useStore';
 
+// Global cache for suggestions to avoid excessive reads across component mounts
+let suggestionsCache: UserProfile[] | null = null;
+
 export function ChatList() {
   const { 
     activeChatId, 
@@ -28,7 +31,8 @@ export function ChatList() {
     language,
     currentTab,
     setCurrentTab,
-    setViewingProfileId
+    setViewingProfileId,
+    setQuotaExceeded
   } = useStore();
   
   const t = translations[language];
@@ -142,23 +146,6 @@ export function ChatList() {
       try {
         if (!currentUser?.uid) return;
 
-        // If no friends, fetch a few "Suggested" users to avoid empty screen
-        if (!currentUser.friends || currentUser.friends.length === 0) {
-          try {
-            const suggestedQ = query(collection(db, 'users'), limit(5));
-            const suggestedSnap = await getDocs(suggestedQ);
-            const suggests = suggestedSnap.docs
-              .map(d => d.data() as UserProfile)
-              .filter(u => u.uid !== currentUser.uid);
-            setContacts(suggests);
-          } catch (e) {
-            console.error("Error fetching suggestions:", e);
-            setContacts([]);
-          }
-          setFriendReels([]);
-          return;
-        }
-        
         const friendsProfiles: UserProfile[] = [];
         const reelsList: typeof friendReels = [];
 
@@ -167,7 +154,7 @@ export function ChatList() {
         const availableUids = Object.keys(detailsMap);
         
         availableUids.forEach(friendId => {
-          if (friendId === currentUser.uid) return;
+          if (friendId === currentUser.uid || !currentUser.friends?.includes(friendId)) return;
           const data = { uid: friendId, ...detailsMap[friendId] } as UserProfile;
           friendsProfiles.push(data);
           
@@ -182,7 +169,7 @@ export function ChatList() {
         });
 
         // 2. Fetch only missing friends (fallback for legacy data)
-        const missingIds = currentUser.friends.filter(id => id && id !== currentUser.uid && !detailsMap[id] && !processedMissingIds.current.has(id));
+        const missingIds = (currentUser.friends || []).filter(id => id && id !== currentUser.uid && !detailsMap[id] && !processedMissingIds.current.has(id));
         
         if (missingIds.length > 0) {
           const batchUpdates: Record<string, any> = {};
@@ -196,7 +183,6 @@ export function ChatList() {
                 const data = friendDoc.data() as UserProfile;
                 friendsProfiles.push(data);
                 
-                // Prepare for auto-denormalization
                 batchUpdates[`friendDetails.${friendId}`] = {
                   displayName: data.displayName || 'مستخدم',
                   photoURL: data.photoURL || '',
@@ -213,21 +199,42 @@ export function ChatList() {
                     reelsCount: data.reelsCount
                   });
                 }
-              } else {
-                // Mark as non-existent to avoid retrying
-                batchUpdates[`friendDetails.${friendId}`] = { displayName: 'مستخدم غير موجود', photoURL: '', nameColor: '', isVerified: false, reelsCount: 0 };
               }
             } catch (innerErr) {
               console.error(`Error fetching profile for ${friendId}:`, innerErr);
             }
           }
-          // Back-fill the denormalized data to user doc to save future reads
           if (Object.keys(batchUpdates).length > 0) {
              updateDoc(doc(db, 'users', currentUser.uid), batchUpdates).catch(console.error);
           }
         }
 
-        setContacts(friendsProfiles.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')));
+        // If after all that we still have NO friends, fetch some suggestions
+        if (friendsProfiles.length === 0) {
+          if (suggestionsCache) {
+            setContacts(suggestionsCache);
+          } else {
+            try {
+              const suggestedQ = query(collection(db, 'users'), limit(10));
+              const suggestedSnap = await getDocs(suggestedQ);
+              const suggests = suggestedSnap.docs
+                .map(d => d.data() as UserProfile)
+                .filter(u => u.uid !== currentUser.uid);
+              suggestionsCache = suggests;
+              setContacts(suggests);
+            } catch (e: any) {
+              if (e.code === 'resource-exhausted' || e.message?.includes('quota')) {
+                console.error("Quota exceeded while fetching suggestions");
+              } else {
+                console.error("Error fetching suggestions:", e);
+              }
+              setContacts([]);
+            }
+          }
+        } else {
+          setContacts(friendsProfiles.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')));
+        }
+        
         setFriendReels(reelsList);
       } catch (err) {
         console.error("Error fetching contacts:", err);
@@ -293,8 +300,11 @@ export function ChatList() {
       } catch (err) {
         console.error("Error in chat snapshot:", err);
       }
-    }, (err) => {
+    }, (err: any) => {
       console.error("Snapshot listener error:", err);
+      if (err.code === 'resource-exhausted' || err.message?.includes('quota')) {
+        setQuotaExceeded(true);
+      }
     });
 
     return () => unsubscribe();
@@ -605,6 +615,7 @@ export function ChatList() {
   const startSystemChat = async () => {
     if (!currentUser || systemLoading) return;
     setSystemLoading(true);
+    setIsSearching(false); // Close search if open
     
     try {
       const systemUser: UserProfile = {
@@ -617,7 +628,16 @@ export function ChatList() {
         photoURL: 'https://cdn-icons-png.flaticon.com/512/4712/4712035.png'
       };
       
-      // Check if private chat already exists in DB directly to be sure
+      // Ensure system user exists in DB profiles
+      const sysDoc = await getDoc(doc(db, 'users', systemUser.uid));
+      if (!sysDoc.exists()) {
+        await setDoc(doc(db, 'users', systemUser.uid), {
+          ...systemUser,
+          createdAt: serverTimestamp()
+        });
+      }
+      
+      // Check if private chat already exists
       const q = query(
         collection(db, 'chats'), 
         where('participants', 'array-contains', currentUser.uid)
@@ -718,7 +738,7 @@ export function ChatList() {
                 {/* Action Items for the very first item if not searching */}
                 {index === 0 && !searchQuery && (
                    <div className="space-y-1 mb-2 px-1">
-                    <Button variant="ghost" className="w-full justify-start gap-4 h-14 rounded-2xl px-4 hover:bg-orange-500/5 group transition-all" onClick={startSystemChat}>
+                    <Button variant="ghost" className="w-full justify-start gap-4 h-14 rounded-2xl px-4 hover:bg-orange-500/5 group transition-all ios-touch" onClick={startSystemChat}>
                       <div className="w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
                         <Bot className="w-5 h-5" />
                       </div>

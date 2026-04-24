@@ -15,14 +15,15 @@ import { ar } from 'date-fns/locale';
 import { useStore } from '@/store/useStore';
 
 export function Profile() {
-  const { profile, setShowProfile, setCurrentTab, viewingProfileId, setViewingProfileId, setActiveChatId } = useStore();
+  const { profile, setShowProfile, setShowSettings, setCurrentTab, viewingProfileId, setViewingProfileId, setActiveChatId, language } = useStore();
   const [targetProfile, setTargetProfile] = useState<UserProfile | null>(null);
   const [isOtherProfileLoading, setIsOtherProfileLoading] = useState(false);
 
   const onClose = () => {
+    setShowSettings(false);
     setShowProfile(false);
     setViewingProfileId(null);
-    if (!profile) setCurrentTab('chats');
+    setCurrentTab('chats');
   };
 
   const getParticipantProfiles = (users: UserProfile[]) => {
@@ -401,7 +402,7 @@ export function Profile() {
         
         <div className="absolute top-0 inset-x-0 p-4 flex items-center justify-between z-10 text-white safe-top">
           <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full hover:bg-white/10 ios-touch">
-            <ArrowRight className="h-6 w-6" />
+            <ArrowRight className={`h-6 w-6 ${language === 'English' ? 'rotate-180' : ''}`} />
           </Button>
           <div className="flex gap-2">
             {isMe && (

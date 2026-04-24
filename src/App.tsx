@@ -39,7 +39,8 @@ export default function App() {
     currentTab, setCurrentTab,
     resetApp,
     viewingProfileId, setViewingProfileId,
-    lastChatId
+    lastChatId,
+    quotaExceeded, setQuotaExceeded
   } = useStore();
 
   const lastNotificationTimeRef = useRef<number>(Date.now());
@@ -126,8 +127,11 @@ export default function App() {
           }
         }
       });
-    }, (error) => {
+    }, (error: any) => {
       console.error("Global chats snapshot error:", error);
+      if (error.code === 'resource-exhausted' || error.message?.includes('quota')) {
+        setQuotaExceeded(true);
+      }
     });
 
     return () => unsubscribe();
@@ -175,6 +179,9 @@ export default function App() {
         console.log("Firestore connection verified");
       } catch (error: any) {
         console.warn("Connection test warning:", error);
+        if (error.code === 'resource-exhausted' || error.message?.includes('quota')) {
+          setQuotaExceeded(true);
+        }
       }
     }
     testConnection();
@@ -195,7 +202,7 @@ export default function App() {
           if (snapshot.exists()) {
             const data = snapshot.data() as UserProfile;
             
-            // Data migration for old users
+            // Data migration for old users - only if really missing to save writes
             if ((data.friends === undefined || data.blockedUsers === undefined) && !migrationAttemptedRef.current) {
               migrationAttemptedRef.current = true;
               try {
@@ -240,9 +247,12 @@ export default function App() {
             setProfile(newProfile);
           }
           setLoading(false);
-        }, (error) => {
+        }, (error: any) => {
           console.error("Profile snapshot error:", error);
           setLoading(false);
+          if (error.code === 'resource-exhausted' || error.message?.includes('quota')) {
+            setQuotaExceeded(true);
+          }
           setConfigError(`خطأ في تحميل الملف الشخصي: ${error.message}`);
         });
       } else {
@@ -408,6 +418,25 @@ export default function App() {
           ) : null}
         </motion.div>
       </div>
+
+      {quotaExceeded && (
+        <div className="fixed top-0 left-0 right-0 z-[9999] p-4 animate-in fade-in slide-in-from-top-4 duration-500">
+          <div className="bg-orange-500 text-white rounded-2xl shadow-2xl p-4 flex items-center justify-between gap-4 backdrop-blur-md border border-orange-400/30">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <div className="text-right">
+                <p className="font-bold text-sm leading-tight">تم الوصول للحد اليومي (الكوتا)</p>
+                <p className="text-[10px] opacity-90 font-medium">سيتم إعادة تصفير العداد خلال 24 ساعة. شكراً لصبركم 🇮🇶</p>
+              </div>
+            </div>
+            <Button variant="ghost" size="icon" className="hover:bg-white/20 text-white shrink-0" onClick={() => setQuotaExceeded(false)}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Telegram-style Bottom Navigation */}
       <AnimatePresence>
