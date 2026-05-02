@@ -86,6 +86,22 @@
     --app-font-size: 16px;
 }
 
+:root.font-size-small {
+    --app-font-size: 14px;
+}
+
+:root.font-size-medium {
+    --app-font-size: 16px;
+}
+
+:root.font-size-large {
+    --app-font-size: 18px;
+}
+
+:root.font-size-xlarge {
+    --app-font-size: 20px;
+}
+
 .dark {
     --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
@@ -151,6 +167,24 @@
     display: flex;
     flex-direction: column;
   }
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.perspective-sm {
+  perspective: 1000px;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -253,12 +287,7 @@
 }
 
 .animated-green-text {
-  background: linear-gradient(
-    270deg,
-    #ccff00,
-    #00ff00,
-    #ccff00
-  );
+  background: linear-gradient(270deg, #ccff00, #00ff00, #ccff00);
   background-size: 200% 200%;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -267,17 +296,235 @@
 }
 
 .animated-red-text {
-  background: linear-gradient(
-    270deg,
-    #ff0000,
-    #aa0000,
-    #ff0000
-  );
+  background: linear-gradient(270deg, #ff0000, #cc0000, #ff0000);
   background-size: 200% 200%;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: magic-bg-anim 4s ease infinite;
   font-weight: bold;
+}
+
+.animated-blue-text {
+  background: linear-gradient(270deg, #00ccff, #0066ff, #00ccff);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 4s ease infinite;
+  font-weight: bold;
+}
+
+.animated-purple-text {
+  background: linear-gradient(270deg, #a855f7, #6d28d9, #a855f7);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 4s ease infinite;
+  font-weight: bold;
+}
+
+.animated-green-bg {
+  background: linear-gradient(270deg, #ccff00, #00ff00, #ccff00);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 4s ease infinite;
+}
+
+.animated-red-bg {
+  background: linear-gradient(270deg, #ff0000, #cc0000, #ff0000);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 4s ease infinite;
+}
+
+.animated-blue-bg {
+  background: linear-gradient(270deg, #00ccff, #0066ff, #00ccff);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 4s ease infinite;
+}
+
+.animated-purple-bg {
+  background: linear-gradient(270deg, #a855f7, #6d28d9, #a855f7);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 4s ease infinite;
+}
+
+.animated-gold-text {
+  background: linear-gradient(270deg, #ffd700, #ff8c00, #ffd700);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 3s ease infinite;
+  font-weight: bold;
+}
+
+.animated-gold-bg {
+  background: linear-gradient(270deg, #ffd700, #ff8c00, #ffd700);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 3s ease infinite;
+}
+
+.animated-silver-text {
+  background: linear-gradient(270deg, #c0c0c0, #ffffff, #c0c0c0);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 4s ease infinite;
+  font-weight: bold;
+}
+
+.animated-silver-bg {
+  background: linear-gradient(270deg, #c0c0c0, #ffffff, #c0c0c0);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 4s ease infinite;
+}
+
+.animated-rainbow-text {
+  background: linear-gradient(270deg, #ff0000, #ffa500, #ffff00, #008000, #0000ff, #4b0082, #ee82ee);
+  background-size: 400% 400%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 6s linear infinite;
+  font-weight: bold;
+}
+
+.animated-rainbow-bg {
+  background: linear-gradient(270deg, #ff0000, #ffa500, #ffff00, #008000, #0000ff, #4b0082, #ee82ee);
+  background-size: 400% 400%;
+  animation: magic-bg-anim 6s linear infinite;
+}
+
+.magic-iraq-phosphor-text {
+  background: linear-gradient(270deg, #ff0000, #ffffff, #00ff00, #000000);
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 3s linear infinite;
+  font-weight: bold;
+}
+
+.magic-iraq-phosphor-bg {
+  background: linear-gradient(270deg, #ff0000, #ffffff, #00ff00, #000000);
+  background-size: 300% 300%;
+  animation: magic-bg-anim 3s linear infinite;
+}
+
+.magic-neon-orange-moving-text {
+  background: linear-gradient(270deg, #ff6b00, #ff9e00, #ff6b00);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 2s ease infinite;
+  font-weight: bold;
+}
+
+.magic-neon-orange-moving-bg {
+  background: linear-gradient(270deg, #ff6b00, #ff9e00, #ff6b00);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 2s ease infinite;
+}
+
+.magic-neon-green-moving-text {
+  background: linear-gradient(270deg, #39ff14, #00ff00, #39ff14);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 2s ease infinite;
+  font-weight: bold;
+}
+
+.magic-neon-green-moving-bg {
+  background: linear-gradient(270deg, #39ff14, #00ff00, #39ff14);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 2s ease infinite;
+}
+
+.magic-red-yellow-moving-text {
+  background: linear-gradient(270deg, #ff0000, #ffff00, #ff0000);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 2.5s ease infinite;
+  font-weight: bold;
+}
+
+.magic-red-yellow-moving-bg {
+  background: linear-gradient(270deg, #ff0000, #ffff00, #ff0000);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 2.5s ease infinite;
+}
+
+.magic-iraq-phosphor-text {
+  background: linear-gradient(270deg, #ff0000, #ffffff, #00ff00, #000000);
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 3s linear infinite;
+  font-weight: bold;
+}
+
+.magic-iraq-phosphor-bg {
+  background: linear-gradient(270deg, #ff0000, #ffffff, #00ff00, #000000);
+  background-size: 300% 300%;
+  animation: magic-bg-anim 3s linear infinite;
+}
+
+.magic-neon-orange-moving-text {
+  background: linear-gradient(270deg, #ff6b00, #ff9e00, #ff6b00);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 2s ease infinite;
+  font-weight: bold;
+}
+
+.magic-neon-orange-moving-bg {
+  background: linear-gradient(270deg, #ff6b00, #ff9e00, #ff6b00);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 2s ease infinite;
+}
+
+.magic-neon-green-moving-text {
+  background: linear-gradient(270deg, #39ff14, #00ff00, #39ff14);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 2s ease infinite;
+  font-weight: bold;
+}
+
+.magic-neon-green-moving-bg {
+  background: linear-gradient(270deg, #39ff14, #00ff00, #39ff14);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 2s ease infinite;
+}
+
+.magic-red-yellow-moving-text {
+  background: linear-gradient(270deg, #ff0000, #ffff00, #ff0000);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 2.5s ease infinite;
+  font-weight: bold;
+}
+
+.magic-red-yellow-moving-bg {
+  background: linear-gradient(270deg, #ff0000, #ffff00, #ff0000);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 2.5s ease infinite;
+}
+
+.magic-phosphor-moving-text {
+  background: linear-gradient(270deg, #bfff00, #ffff00, #bfff00);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 2s linear infinite;
+  font-weight: bold;
+  filter: drop-shadow(0 0 8px rgba(191, 255, 0, 0.8));
+}
+
+.magic-phosphor-moving-bg {
+  background: linear-gradient(270deg, #bfff00, #ffff00, #bfff00);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 2s linear infinite;
 }
 
 .magic-red-blue-text {
@@ -376,36 +623,6 @@
   );
   background-size: 200% 200%;
   animation: magic-bg-anim 3s linear infinite;
-}
-
-.animated-green-text {
-  background: linear-gradient(270deg, #ccff00, #00ff00, #ccff00);
-  background-size: 200% 200%;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: magic-bg-anim 4s ease infinite;
-  font-weight: bold;
-}
-
-.animated-red-text {
-  background: linear-gradient(270deg, #ff0000, #aa0000, #ff0000);
-  background-size: 200% 200%;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: magic-bg-anim 4s ease infinite;
-  font-weight: bold;
-}
-
-.animated-green-bg {
-  background: linear-gradient(270deg, #ccff00, #00ff00, #ccff00);
-  background-size: 200% 200%;
-  animation: magic-bg-anim 4s ease infinite;
-}
-
-.animated-red-bg {
-  background: linear-gradient(270deg, #ff0000, #aa0000, #ff0000);
-  background-size: 200% 200%;
-  animation: magic-bg-anim 4s ease infinite;
 }
 
 @keyframes magic-bg-anim {

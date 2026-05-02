@@ -54,16 +54,29 @@ service cloud.firestore {
       return resource.data;
     }
 
+    function isDeveloper() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'isofiq@teleiraq.app' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isDeveloper == true)
+      );
+    }
+
     function isValidUser(data) {
+      let isDev = isAuthenticated() && request.auth.token.email == 'isofiq@teleiraq.app';
       let hasUid = 'uid' in data;
-      return (!hasUid || (data.uid == request.auth.uid || data.uid == 'teleiraq-system')) &&
+      return (!hasUid || (data.uid == request.auth.uid || data.uid == 'teleiraq-system' || isDev)) &&
              (!('phoneNumber' in data) || data.phoneNumber is string) &&
              (!('email' in data) || (data.email is string && data.email.size() <= 200)) &&
              (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
              (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1000000)) &&
              (!('status' in data) || (data.status is string && data.status.size() <= 300)) &&
              (!('lastSeen' in data) || (data.lastSeen == null || data.lastSeen is timestamp)) &&
-             (!('chatBackground' in data) || (data.chatBackground is string && data.chatBackground.size() <= 1000)) &&
+             (!('chatBackground' in data) || (data.chatBackground is string && data.chatBackground.size() <= 1000000)) &&
+             (!('username' in data) || (data.username is string && data.username.size() <= 50)) &&
+             (!('birthDate' in data) || (data.birthDate is string && data.birthDate.size() <= 20)) &&
+             (!('city' in data) || (data.city is string && data.city.size() <= 50)) &&
+             (!('hobbies' in data) || (data.hobbies is string && data.hobbies.size() <= 200)) &&
              (!('privacy' in data) || data.privacy is map) &&
              (!('notificationSounds' in data) || data.notificationSounds is map) &&
              (!('sessionVersion' in data) || data.sessionVersion is number) &&
@@ -71,6 +84,10 @@ service cloud.firestore {
              (!('friendDetails' in data) || data.friendDetails is map) &&
              (!('blockedUsers' in data) || (data.blockedUsers is list && data.blockedUsers.size() <= 1000)) &&
              (!('isVerified' in data) || data.isVerified is bool) &&
+             (!('isDeveloper' in data) || data.isDeveloper is bool) &&
+             (!('isBanned' in data) || data.isBanned is bool) &&
+             (!('forceLogoutSignal' in data) || data.forceLogoutSignal is number) &&
+             (!('specialColor' in data) || (data.specialColor is string && data.specialColor.size() <= 50)) &&
              (!('verifiedAt' in data) || (data.verifiedAt == null || data.verifiedAt is timestamp)) &&
              (!('magicUnlockedAt' in data) || (data.magicUnlockedAt == null || data.magicUnlockedAt is timestamp)) &&
              (!('magic2UnlockedAt' in data) || (data.magic2UnlockedAt == null || data.magic2UnlockedAt is timestamp)) &&
@@ -108,7 +125,7 @@ service cloud.firestore {
              data.chatId is string &&
              (data.senderId == request.auth.uid || data.senderId == 'teleiraq-system') &&
              (!('text' in data) || (data.text is string && data.text.size() <= 5000)) &&
-             data.type in ['text', 'image', 'video', 'file', 'location', 'voice'] &&
+             data.type in ['text', 'image', 'video', 'file', 'location', 'voice', 'sticker', 'system'] &&
              (!('fileUrl' in data) || (data.fileUrl is string && data.fileUrl.size() <= 1000000)) &&
              (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 200)) &&
              (!('location' in data) || (data.location is map && data.location.latitude is number && data.location.longitude is number)) &&
@@ -120,6 +137,37 @@ service cloud.firestore {
              data.createdAt is timestamp;
     }
 
+    function isValidGame(data) {
+      return data.keys().hasAll(['type', 'status', 'players', 'updatedAt']) &&
+             data.type in ['dominoes', 'blackjack', 'xo', 'chess', 'ludo'] &&
+             data.status in ['waiting', 'playing', 'finished'] &&
+             data.players is list &&
+             data.players.size() >= 1 &&
+             (!('turn' in data) || data.turn is string) &&
+             (!('board' in data) || data.board is list || data.board is map) &&
+             (!('hands' in data) || data.hands is map) &&
+             (!('scores' in data) || data.scores is map) &&
+             (!('positions' in data) || data.positions is map) &&
+             (!('lastRoll' in data) || data.lastRoll == null || data.lastRoll is number) &&
+             (!('lastAction' in data) || (data.lastAction is string && data.lastAction.size() <= 100)) &&
+             (!('reason' in data) || (data.reason is string && data.reason.size() <= 200)) &&
+             (!('fen' in data) || (data.fen is string && data.fen.size() <= 1000)) &&
+             (!('winner' in data) || (data.winner == null || data.winner is string)) &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidCall(data) {
+      return data.keys().hasAll(['callerId', 'receiverId', 'chatId', 'status', 'type', 'createdAt']) &&
+             data.callerId is string &&
+             data.receiverId is string &&
+             data.chatId is string &&
+             data.status in ['calling', 'active', 'ended', 'rejected'] &&
+             data.type in ['voice', 'video'] &&
+             (!('offer' in data) || data.offer is map) &&
+             (!('answer' in data) || data.answer is map) &&
+             data.createdAt is timestamp;
+    }
+
     // Rules
     match /test/connection {
       allow read: if true;
@@ -127,10 +175,17 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming());
-      allow update: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && (
-        (incoming().diff(existing()).affectedKeys().hasOnly(['lastSeen'])) ||
-        (incoming().diff(existing()).affectedKeys().hasAny(['displayName', 'photoURL', 'status', 'chatBackground', 'privacy', 'notificationSounds', 'sessionVersion', 'friends', 'friendDetails', 'blockedUsers', 'isVerified', 'verifiedAt', 'magicUnlockedAt', 'magic2UnlockedAt', 'magic3UnlockedAt', 'magic4UnlockedAt', 'magicIraqUnlockedAt', 'animatedColorsUnlockedAt', 'nameColor', 'reels', 'reelsCount', 'lastReelAt']))
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && 
+                    !incoming().keys().hasAny(['isDeveloper', 'isBanned', 'forceLogoutSignal', 'specialColor', 'isVerified']);
+      allow update: if isValidId(userId) && (isOwner(userId) || isDeveloper()) && isValidUser(incoming()) && (
+        isDeveloper() || (
+          isOwner(userId) &&
+          !incoming().diff(existing()).affectedKeys().hasAny(['isDeveloper', 'isBanned', 'forceLogoutSignal', 'specialColor', 'isVerified']) &&
+          (
+            (incoming().diff(existing()).affectedKeys().hasOnly(['lastSeen'])) ||
+            (incoming().diff(existing()).affectedKeys().hasAny(['displayName', 'username', 'birthDate', 'city', 'hobbies', 'photoURL', 'status', 'chatBackground', 'privacy', 'notificationSounds', 'sessionVersion', 'friends', 'friendDetails', 'blockedUsers', 'magicUnlockedAt', 'magic2UnlockedAt', 'magic3UnlockedAt', 'magic4UnlockedAt', 'magicIraqUnlockedAt', 'animatedColorsUnlockedAt', 'nameColor', 'reels', 'reelsCount', 'lastReelAt']))
+          )
+        )
       );
 
       match /userReels/{reelId} {
@@ -192,9 +247,21 @@ service cloud.firestore {
 
     match /games/{gameId} {
       allow read: if isAuthenticated() && request.auth.uid in resource.data.players;
-      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.players;
-      allow update: if isAuthenticated() && request.auth.uid in resource.data.players;
+      allow create: if isValidId(gameId) && isAuthenticated() && request.auth.uid in incoming().players && isValidGame(incoming());
+      allow update: if isAuthenticated() && request.auth.uid in resource.data.players && isValidGame(incoming());
       allow delete: if isAuthenticated() && request.auth.uid in resource.data.players;
+    }
+
+    match /calls/{callId} {
+      allow create: if isAuthenticated() && isValidId(callId) && incoming().callerId == request.auth.uid && isValidCall(incoming());
+      allow read, update, delete: if isAuthenticated() && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+
+      match /callerCandidates/{candidateId} {
+        allow read, write: if isAuthenticated();
+      }
+      match /receiverCandidates/{candidateId} {
+        allow read, write: if isAuthenticated();
+      }
     }
   }
 }

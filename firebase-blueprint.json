@@ -16,6 +16,10 @@
         "notificationSounds": { "type": "object" },
         "sessionVersion": { "type": "number" },
         "friends": { "type": "array", "items": { "type": "string" } },
+        "isDeveloper": { "type": "boolean" },
+        "isBanned": { "type": "boolean" },
+        "forceLogoutSignal": { "type": "number" },
+        "specialColor": { "type": "string" },
         "magicUnlockedAt": { "type": "string", "format": "date-time" },
         "animatedColorsUnlockedAt": { "type": "string", "format": "date-time" },
         "nameColor": { "type": "string" },
@@ -62,17 +66,38 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "type": { "type": "string", "enum": ["dominoes"] },
+        "type": { "type": "string", "enum": ["dominoes", "blackjack", "xo", "chess", "ludo"] },
         "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
         "players": { "type": "array", "items": { "type": "string" } },
         "turn": { "type": "string" },
         "board": { "type": "object" },
         "hands": { "type": "object" },
-        "boneyard": { "type": "array" },
+        "scores": { "type": "object" },
+        "positions": { "type": "object" },
+        "lastRoll": { "type": "number" },
+        "lastAction": { "type": "string" },
+        "reason": { "type": "string" },
+        "fen": { "type": "string" },
         "winner": { "type": "string" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["type", "status", "players", "updatedAt"]
+    },
+    "Call": {
+      "title": "Call",
+      "description": "WebRTC Call Signaling",
+      "type": "object",
+      "properties": {
+        "callerId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "chatId": { "type": "string" },
+        "offer": { "type": "object" },
+        "answer": { "type": "object" },
+        "status": { "type": "string", "enum": ["calling", "active", "ended", "rejected"] },
+        "type": { "type": "string", "enum": ["voice", "video"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["callerId", "receiverId", "chatId", "status", "type", "createdAt"]
     }
   },
   "firestore": {
@@ -91,6 +116,18 @@
     "/games/{gameId}": {
       "schema": "Game",
       "description": "Game sessions"
+    },
+    "/calls/{callId}": {
+      "schema": "Call",
+      "description": "Call signaling sessions"
+    },
+    "/calls/{callId}/callerCandidates/{candidateId}": {
+      "schema": "object",
+      "description": "ICE candidates from caller"
+    },
+    "/calls/{callId}/receiverCandidates/{candidateId}": {
+      "schema": "object",
+      "description": "ICE candidates from receiver"
     }
   }
 }

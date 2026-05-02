@@ -38,46 +38,73 @@ export function Auth() {
     setLoading(true);
     setError('');
     
-    // Normalize "username" to email if it's not an email
-    // Remove spaces and special characters for the local part if not already an email
-    const authEmail = trimmedEmail.includes('@') 
-      ? trimmedEmail 
-      : `${trimmedEmail.replace(/\s+/g, '').toLowerCase()}@teleiraq.app`;
+    // Smart mapping for user intent:
+    // 1. If it's a real email, use it.
+    // 2. If it's "ISOFIQ" (developer), map to isofiq@teleiraq.app.
+    // 3. If it's a username without @, treat as local username and map to @teleiraq.app domain.
+    const isEmail = trimmedEmail.includes('@');
+    const normalizedId = trimmedEmail.toLowerCase();
+    let authEmail = trimmedEmail;
+
+    if (!isEmail) {
+      if (normalizedId === 'isofiq') {
+        authEmail = 'isofiq@teleiraq.app';
+      } else {
+        // Allow ONLY alphanumeric and . _ - for clean username
+        const cleanName = trimmedEmail.replace(/[^a-zA-Z0-9._\-]/g, '').toLowerCase();
+        if (!cleanName) return setError('اسم المستخدم غير صالح');
+        authEmail = `${cleanName}@teleiraq.app`;
+      }
+    }
 
     try {
       if (isLogin) {
-        await signInWithEmailAndPassword(auth, authEmail, password);
+        try {
+          await signInWithEmailAndPassword(auth, authEmail, password);
+        } catch (signInErr: any) {
+          // If developer account not found, suggest registration
+          if ((signInErr.code === 'auth/user-not-found' || signInErr.code === 'auth/invalid-credential') && normalizedId === 'isofiq') {
+            setError('حساب المطور غير موجود أو البيانات غير صحيحة. يرجى "إنشاء حساب" أولاً بنفس هذه البيانات.');
+            return;
+          }
+          throw signInErr;
+        }
       } else {
         const userCredential = await createUserWithEmailAndPassword(auth, authEmail, password);
         const user = userCredential.user;
         
         await updateProfile(user, { displayName });
         
-        // Create initial profile
+        // Create initial profile with normalized data
         await setDoc(doc(db, 'users', user.uid), {
           uid: user.uid,
           email: user.email,
+          username: isEmail ? null : trimmedEmail.replace(/[^a-zA-Z0-9]/g, '').toLowerCase(),
           displayName: displayName,
-          status: 'أنا أستخدم تليعراق!',
+          status: 'أنا أستخدم تلي عراق!',
           lastSeen: serverTimestamp(),
           nameColor: '#8b5cf6',
+          photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
           reels: [],
           friends: [],
-          blockedUsers: []
+          blockedUsers: [],
+          isDeveloper: user.email?.toLowerCase() === 'isofiq@teleiraq.app',
+          isVerified: user.email?.toLowerCase() === 'isofiq@teleiraq.app',
+          sessionVersion: 1
         });
       }
     } catch (err: any) {
-      console.error('Auth error:', err);
+      console.error('Auth error details:', err.code, err.message);
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        setError('خطأ في اسم المستخدم أو كلمة المرور');
+        setError('خطأ في اسم المستخدم أو كلمة المرور. تأكد من البيانات المدخلة.');
       } else if (err.code === 'auth/email-already-in-use') {
-        setError('اسم المستخدم هذا مستخدم بالفعل');
+        setError('اسم المستخدم هذا مستخدم مسبقاً، يرجى اختيار اسم آخر.');
       } else if (err.code === 'auth/weak-password') {
-        setError('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+        setError('كلمة المرور ضعيفة جداً، يرجى اختيار 6 أحرف أو أكثر.');
       } else if (err.code === 'auth/invalid-email') {
-        setError('اسم المستخدم غير صالح. يرجى استخدام أحرف وأرقام فقط.');
+        setError('الاسم أو البريد غير صالح. استخدم أحرف إنجليزية وأرقام فقط.');
       } else {
-        setError(err.message || 'حدث خطأ أثناء تسجيل الدخول');
+        setError('حدث خطأ غير متوقع. يرجى المحاولة لاحقاً.');
       }
     } finally {
       setLoading(false);
@@ -88,15 +115,15 @@ export function Auth() {
     <div className="h-screen w-screen flex items-center justify-center bg-background telegram-bg" dir="rtl">
       <div id="recaptcha-container"></div>
       
-      <Card className="w-full max-w-md border-none shadow-2xl">
+      <Card className="w-full max-w-md border-none shadow-2xl overflow-hidden">
         <CardHeader className="text-center space-y-4">
           <div className="mx-auto">
             <IraqLogo className="w-20 h-20" />
           </div>
           <div className="space-y-2">
-            <CardTitle className="text-3xl font-bold tracking-tight">تليعراق</CardTitle>
-            <CardDescription className="text-base">
-              {isLogin ? 'تسجيل الدخول إلى حسابك' : 'إنشاء حساب جديد في تليعراق'}
+            <CardTitle className="text-4xl font-black tracking-tight magic-iraq-text pb-1">تلي عراق</CardTitle>
+            <CardDescription className="text-base font-medium">
+              {isLogin ? 'تسجيل الدخول إلى حسابك' : 'إنشاء حساب جديد في تلي عراق'}
             </CardDescription>
           </div>
         </CardHeader>

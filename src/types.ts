@@ -1,6 +1,7 @@
 export interface UserProfile {
   uid: string;
-  phoneNumber: string;
+  phoneNumber?: string;
+  email?: string;
   displayName?: string;
   photoURL?: string;
   status?: string;
@@ -16,9 +17,16 @@ export interface UserProfile {
   lastReelAt?: any;
   blockedUsers?: string[]; // Array of UIDs this user has blocked
   chatBackground?: string;
+  birthDate?: string;
+  city?: string;
+  hobbies?: string;
   magicUnlockedAt?: any;
   animatedColorsUnlockedAt?: any;
   isVerified?: boolean;
+  isDeveloper?: boolean;
+  isBanned?: boolean;
+  forceLogoutSignal?: number;
+  specialColor?: string;
   verifiedAt?: any;
   sessionVersion?: number;
   friends?: string[];
@@ -27,6 +35,7 @@ export interface UserProfile {
     photoURL?: string;
     nameColor?: string;
     isVerified?: boolean;
+    phoneNumber?: string;
   } };
 }
 
@@ -60,6 +69,9 @@ export interface Chat {
     isVerified?: boolean;
     phoneNumber?: string;
   } };
+  unreadCount?: { [userId: string]: number };
+  mentionsCount?: { [userId: string]: number };
+  pinnedBy?: string[];
   call?: {
     type: 'voice' | 'video';
     callerId: string;
@@ -73,10 +85,12 @@ export interface Message {
   chatId: string;
   senderId: string;
   text?: string;
-  type: 'text' | 'image' | 'video' | 'file' | 'location' | 'voice';
+  type: 'text' | 'image' | 'video' | 'file' | 'location' | 'voice' | 'sticker';
   fileUrl?: string;
   fileName?: string;
   location?: { latitude: number; longitude: number };
+  isLive?: boolean;
+  liveExpiresAt?: any;
   createdAt: any;
   read?: boolean;
   reactions?: { [emoji: string]: string[] }; // emoji -> list of userIds
