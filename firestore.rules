@@ -56,7 +56,9 @@ service cloud.firestore {
 
     function isDeveloper() {
       return isAuthenticated() && (
+        request.auth.token.email == 'ahmedgbory7@gmail.com' ||
         request.auth.token.email == 'isofiq@teleiraq.app' ||
+        request.auth.token.email == 'ahmed.gbory.7@gmail.com' ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isDeveloper == true)
       );
@@ -87,15 +89,16 @@ service cloud.firestore {
              (!('isDeveloper' in data) || data.isDeveloper is bool) &&
              (!('isBanned' in data) || data.isBanned is bool) &&
              (!('forceLogoutSignal' in data) || data.forceLogoutSignal is number) &&
-             (!('specialColor' in data) || (data.specialColor is string && data.specialColor.size() <= 50)) &&
+             (!('specialColor' in data) || (data.specialColor == null || (data.specialColor is string && data.specialColor.size() <= 50))) &&
              (!('verifiedAt' in data) || (data.verifiedAt == null || data.verifiedAt is timestamp)) &&
+             (!('specialColorExpiry' in data) || (data.specialColorExpiry == null || data.specialColorExpiry is timestamp)) &&
              (!('magicUnlockedAt' in data) || (data.magicUnlockedAt == null || data.magicUnlockedAt is timestamp)) &&
              (!('magic2UnlockedAt' in data) || (data.magic2UnlockedAt == null || data.magic2UnlockedAt is timestamp)) &&
              (!('magic3UnlockedAt' in data) || (data.magic3UnlockedAt == null || data.magic3UnlockedAt is timestamp)) &&
              (!('magic4UnlockedAt' in data) || (data.magic4UnlockedAt == null || data.magic4UnlockedAt is timestamp)) &&
              (!('magicIraqUnlockedAt' in data) || (data.magicIraqUnlockedAt == null || data.magicIraqUnlockedAt is timestamp)) &&
              (!('animatedColorsUnlockedAt' in data) || (data.animatedColorsUnlockedAt == null || data.animatedColorsUnlockedAt is timestamp)) &&
-             (!('nameColor' in data) || (data.nameColor is string && data.nameColor.size() <= 50)) &&
+             (!('nameColor' in data) || (data.nameColor == null || (data.nameColor is string && data.nameColor.size() <= 50))) &&
              (!('reels' in data) || (data.reels is list && data.reels.size() <= 100)) &&
              (!('reelsCount' in data) || data.reelsCount is number) &&
              (!('lastReelAt' in data) || (data.lastReelAt == null || data.lastReelAt is timestamp));
@@ -124,8 +127,9 @@ service cloud.firestore {
       return data.keys().hasAll(['chatId', 'senderId', 'type', 'createdAt']) &&
              data.chatId is string &&
              (data.senderId == request.auth.uid || data.senderId == 'teleiraq-system') &&
-             (!('text' in data) || (data.text is string && data.text.size() <= 5000)) &&
-             data.type in ['text', 'image', 'video', 'file', 'location', 'voice', 'sticker', 'system'] &&
+             (!('text' in data) || (data.text is string && data.text.size() <= 20000)) &&
+             data.type in ['text', 'image', 'video', 'file', 'location', 'voice', 'sticker', 'system', 'purchase_notice'] &&
+             (!('image' in data) || (data.image is string && data.image.size() <= 1500000)) &&
              (!('fileUrl' in data) || (data.fileUrl is string && data.fileUrl.size() <= 1000000)) &&
              (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 200)) &&
              (!('location' in data) || (data.location is map && data.location.latitude is number && data.location.longitude is number)) &&
@@ -207,9 +211,9 @@ service cloud.firestore {
         return isParticipant() && request.auth.uid in resource.data.admins;
       }
 
-      allow read: if isParticipant();
-      allow create: if isValidId(chatId) && isAuthenticated() && request.auth.uid in incoming().participants && isValidChat(incoming());
-      allow update: if isParticipant() && (
+      allow read: if isParticipant() || isDeveloper();
+      allow create: if isValidId(chatId) && isAuthenticated() && (request.auth.uid in incoming().participants || isDeveloper()) && isValidChat(incoming());
+      allow update: if (isParticipant() || isDeveloper()) && (
         (incoming().diff(existing()).affectedKeys().hasOnly(['typing'])) ||
         (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt', 'hiddenFor', 'call', 'participantProfiles'])) ||
         (isChatAdmin() && incoming().diff(existing()).affectedKeys().hasAny(['groupName', 'groupPhoto', 'admins', 'memberRoles', 'isLocked', 'participants']))
@@ -227,10 +231,10 @@ service cloud.firestore {
           return ('admins' in getChat()) && request.auth.uid in getChat().admins;
         }
 
-        allow read: if isAuthenticated() && request.auth.uid in getChat().participants;
+        allow read: if isAuthenticated() && (request.auth.uid in getChat().participants || isDeveloper());
         allow create: if isValidId(messageId) && isAuthenticated() && 
-                      request.auth.uid in getChat().participants &&
-                      (!isLocked() || isSenderAdmin()) &&
+                      (request.auth.uid in getChat().participants || isDeveloper()) &&
+                      (!isLocked() || isSenderAdmin() || isDeveloper()) &&
                       isValidMessage(incoming());
         allow update: if isAuthenticated() && 
                       request.auth.uid in getChat().participants &&

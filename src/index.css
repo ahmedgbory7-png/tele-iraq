@@ -391,6 +391,69 @@
   animation: magic-bg-anim 6s linear infinite;
 }
 
+.animated-carbon-text {
+  background: linear-gradient(270deg, #18181b, #3f3f46, #18181b);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 4s ease infinite;
+  font-weight: bold;
+}
+
+.animated-carbon-bg {
+  background: linear-gradient(270deg, #18181b, #3f3f46, #18181b);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 4s ease infinite;
+}
+
+.animated-neon-yellow-text {
+  background: linear-gradient(270deg, #bfff00, #ffff00, #bfff00);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 2s linear infinite;
+  font-weight: bold;
+  filter: drop-shadow(0 0 5px rgba(191, 255, 0, 0.5));
+}
+
+.animated-neon-yellow-bg {
+  background: linear-gradient(270deg, #bfff00, #ffff00, #bfff00);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 2s linear infinite;
+}
+
+.animated-fire-text {
+  background: linear-gradient(270deg, #ff4500, #ff8c00, #ff4500);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 3s ease infinite;
+  font-weight: bold;
+  filter: drop-shadow(0 0 5px rgba(255, 69, 0, 0.5));
+}
+
+.animated-fire-bg {
+  background: linear-gradient(270deg, #ff4500, #ff8c00, #ff4500);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 3s ease infinite;
+}
+
+.animated-neon-red-text {
+  background: linear-gradient(270deg, #ff0000, #ff5f5f, #ff0000);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: magic-bg-anim 2s ease infinite;
+  font-weight: bold;
+  filter: drop-shadow(0 0 8px rgba(255, 0, 0, 0.6));
+}
+
+.animated-neon-red-bg {
+  background: linear-gradient(270deg, #ff0000, #ff5f5f, #ff0000);
+  background-size: 200% 200%;
+  animation: magic-bg-anim 2s ease infinite;
+}
+
 .magic-iraq-phosphor-text {
   background: linear-gradient(270deg, #ff0000, #ffffff, #00ff00, #000000);
   background-size: 300% 300%;

@@ -122,7 +122,23 @@ export function ChatList() {
     }
 
     const fetchContacts = async () => {
-      if (quotaExceeded) return;
+      if (quotaExceeded) {
+        // Still try to use denormalized info even if quota hit
+        const detailsMap = currentUser?.friendDetails || {};
+        const availableUids = Object.keys(detailsMap);
+        const friendsArray = Array.isArray(currentUser?.friends) ? currentUser.friends : [];
+        const friendsProfiles: UserProfile[] = [];
+        
+        availableUids.forEach(friendId => {
+          if (friendId === currentUser?.uid || !friendsArray.includes(friendId)) return;
+          friendsProfiles.push({ uid: friendId, ...detailsMap[friendId] } as UserProfile);
+        });
+        
+        if (friendsProfiles.length > 0) {
+          setContacts(friendsProfiles.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')));
+        }
+        return;
+      }
       try {
         if (!currentUser?.uid) return;
 
@@ -150,14 +166,16 @@ export function ChatList() {
         });
 
         // 2. Fetch only missing friends (fallback for legacy data)
-        const missingIds = friendsArray.filter(id => id && id !== currentUser.uid && !detailsMap[id] && !processedMissingIds.current.has(id));
+        const missingIds = friendsArray.filter(id => id && id !== currentUser.uid && (!detailsMap[id] || (detailsMap[id] as any).specialColor === undefined) && !processedMissingIds.current.has(id));
         
         if (missingIds.length > 0) {
+          // Limit background fetch to first 20 to avoid massive reads
+          const fetchLimit = missingIds.slice(0, 20);
           const batchUpdates: Record<string, any> = {};
           
           // Chunk missing IDs into groups of 30 (Firestore 'in' limit)
-          for (let i = 0; i < missingIds.length; i += 30) {
-            const chunk = missingIds.slice(i, i + 30);
+          for (let i = 0; i < fetchLimit.length; i += 30) {
+            const chunk = fetchLimit.slice(i, i + 30);
             try {
               chunk.forEach(id => processedMissingIds.current.add(id));
               const q = query(collection(db, 'users'), where('uid', 'in', chunk));
@@ -171,6 +189,7 @@ export function ChatList() {
                   displayName: data.displayName || 'مستخدم',
                   photoURL: data.photoURL || '',
                   nameColor: data.nameColor || '',
+                  specialColor: data.specialColor || null,
                   isVerified: !!data.isVerified,
                   reelsCount: data.reelsCount || 0
                 };
@@ -189,31 +208,24 @@ export function ChatList() {
               if (innerErr.code === 'resource-exhausted') setQuotaExceeded(true);
             }
           }
-          
-          if (Object.keys(batchUpdates).length > 0) {
-             updateDoc(doc(db, 'users', currentUser.uid), batchUpdates).catch(console.error);
-          }
         }
 
         // If after all that we still have NO friends, fetch some suggestions
         if (friendsProfiles.length === 0) {
           if (suggestionsCache) {
             setContacts(suggestionsCache);
-          } else {
+          } else if (!quotaExceeded) {
             try {
-              const suggestedQ = query(collection(db, 'users'), limit(10));
+              // Suggested users should be real users, but we limit to save quota
+              const suggestedQ = query(collection(db, 'users'), limit(5));
               const suggestedSnap = await getDocs(suggestedQ);
               const suggests = suggestedSnap.docs
-                .map(d => d.data() as UserProfile)
+                .map(d => ({ ...d.data(), uid: d.id } as UserProfile))
                 .filter(u => u.uid !== currentUser.uid);
               suggestionsCache = suggests;
               setContacts(suggests);
             } catch (e: any) {
-              if (e.code === 'resource-exhausted' || e.message?.includes('quota')) {
-                console.error("Quota exceeded while fetching suggestions");
-              } else {
-                console.error("Error fetching suggestions:", e);
-              }
+              if (e.code === 'resource-exhausted') setQuotaExceeded(true);
               setContacts([]);
             }
           }
@@ -227,7 +239,7 @@ export function ChatList() {
       }
     };
     fetchContacts();
-  }, [currentUser?.uid, JSON.stringify(currentUser?.friends)]);
+  }, [currentUser?.uid, (currentUser?.friends || []).length]);
   
   const filteredChats = useMemo(() => {
     if (!currentUser) return chats;
@@ -343,36 +355,29 @@ export function ChatList() {
         const remoteQueries = [];
         const normalized = normalizeArabic(val);
         
-        // Build variations for Arabic searches
+        // Use fewer variations to save quota
         const Variations = [val];
         if (normalized !== val) Variations.push(normalized);
         
-        const capitalized = val.charAt(0).toUpperCase() + val.slice(1);
-        if (capitalized !== val) Variations.push(capitalized);
-
-        const uniqueSearches = Array.from(new Set(Variations));
+        const uniqueSearches = Array.from(new Set(Variations)).slice(0, 2);
         uniqueSearches.forEach(name => {
           remoteQueries.push(getDocs(query(
             collection(db, 'users'),
             where('displayName', '>=', name),
             where('displayName', '<=', name + '\uf8ff'),
-            limit(10)
-          )));
-          remoteQueries.push(getDocs(query(
-            collection(db, 'users'),
-            where('username', '>=', name.toLowerCase()),
-            where('username', '<=', name.toLowerCase() + '\uf8ff'),
-            limit(10)
+            limit(5)
           )));
         });
 
         // Phone search as typed
-        remoteQueries.push(getDocs(query(
-          collection(db, 'users'),
-          where('phoneNumber', '>=', normalizedVal),
-          where('phoneNumber', '<=', normalizedVal + '\uf8ff'),
-          limit(10)
-        )));
+        if (/^\d+$/.test(normalizedVal)) {
+          remoteQueries.push(getDocs(query(
+            collection(db, 'users'),
+            where('phoneNumber', '>=', normalizedVal),
+            where('phoneNumber', '<=', normalizedVal + '\uf8ff'),
+            limit(5)
+          )));
+        }
 
         try {
           const results = await Promise.allSettled(remoteQueries);
@@ -434,6 +439,7 @@ export function ChatList() {
               displayName: data.displayName || 'مستخدم',
               photoURL: data.photoURL || '',
               nameColor: data.nameColor || '',
+              specialColor: data.specialColor || null,
               isVerified: data.isVerified || false,
               reelsCount: data.reelsCount || 0
             }
@@ -460,6 +466,7 @@ export function ChatList() {
           displayName: targetUser.displayName || 'مستخدم تلي عراق',
           photoURL: targetUser.photoURL || null,
           nameColor: targetUser.nameColor || 'white',
+          specialColor: targetUser.specialColor || null,
           isVerified: !!targetUser.isVerified
         }
       });
@@ -567,6 +574,7 @@ export function ChatList() {
         displayName: u.displayName || 'مستخدم',
         photoURL: u.photoURL || '',
         nameColor: u.nameColor || '',
+        specialColor: u.specialColor || null,
         isVerified: u.isVerified || false,
         phoneNumber: u.phoneNumber || ''
       };
@@ -640,6 +648,19 @@ export function ChatList() {
 
   return (
     <div className="flex flex-col h-full bg-card shadow-inner" dir={language === 'English' ? 'ltr' : 'rtl'}>
+      {/* Quota Banner */}
+      {quotaExceeded && (
+        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center justify-between animate-in slide-in-from-top duration-300">
+          <div className="flex items-center gap-2 text-amber-500 font-bold text-[10px]">
+            <AlertCircle className="w-3 h-3" />
+            <span>الحصة اليومية مستنفدة (Quota Limit Hit)</span>
+          </div>
+          <Button variant="ghost" size="sm" className="h-6 text-[9px] hover:bg-amber-500/20 text-amber-500" onClick={() => setQuotaExceeded(false)}>
+            تجاهل
+          </Button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="glass-header p-4 flex items-center justify-between safe-top">
         <motion.div 
@@ -822,8 +843,8 @@ export function ChatList() {
                     >
                       <div className="flex items-center gap-1 min-w-0">
                         <p 
-                          className={`font-bold text-sm truncate ${getNameColorClass(user.nameColor)}`} 
-                          style={{ color: isMagicColor(user.nameColor) ? undefined : (user.nameColor || '#141414') }}
+                          className={`font-bold text-sm truncate ${getNameColorClass(user.specialColor || user.nameColor, (user as any).specialColorExpiry)}`} 
+                          style={{ color: isMagicColor(user.specialColor || user.nameColor, (user as any).specialColorExpiry) ? undefined : (user.nameColor || '#141414') }}
                         >
                           {user.displayName}
                         </p>
@@ -869,6 +890,7 @@ export function ChatList() {
               const displayName = isGroup ? chat.groupName : (otherProfile?.displayName || 'مستخدم تلي عراق');
               const photoURL = isGroup ? chat.groupPhoto : otherProfile?.photoURL;
               const nameColor = isGroup ? '#8b5cf6' : (otherProfile?.nameColor || '#8b5cf6');
+              const specialColor = isGroup ? null : otherProfile?.specialColor;
 
               return (
                 <div key={chat.id} className="p-1 px-2 relative overflow-hidden rounded-xl">
@@ -920,9 +942,9 @@ export function ChatList() {
                           <div className="flex items-center gap-1 truncate max-w-[75%]">
                             <p 
                               className={`font-bold text-sm truncate ${
-                                activeChatId === chat.id ? '' : getNameColorClass(nameColor)
+                                activeChatId === chat.id ? '' : getNameColorClass(specialColor || nameColor, (chat as any).participantProfiles?.[chat.participants.find(p => p !== currentUser?.uid) || '']?.specialColorExpiry)
                               }`} 
-                              style={{ color: activeChatId === chat.id ? 'white' : (isMagicColor(nameColor) ? undefined : (nameColor || '#141414')) }}
+                              style={{ color: activeChatId === chat.id ? 'white' : (isMagicColor(specialColor || nameColor, (chat as any).participantProfiles?.[chat.participants.find(p => p !== currentUser?.uid) || '']?.specialColorExpiry) ? undefined : (nameColor || '#141414')) }}
                             >
                               {displayName}
                             </p>

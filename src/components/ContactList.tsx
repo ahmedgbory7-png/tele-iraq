@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Search, UserPlus, Loader2, BadgeCheck, X, Plus, UserMinus, MessageSquare, User, Bot, Phone, Share2, Copy, Check } from 'lucide-react';
+import { Search, UserPlus, Loader2, BadgeCheck, X, Plus, UserMinus, MessageSquare, User, Bot, Phone, Share2, Copy, Check, UserCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GroupedVirtuoso } from 'react-virtuoso';
 import { useStore } from '@/store/useStore';
@@ -15,7 +15,11 @@ import { getNameColorClass, isMagicColor } from '@/lib/utils';
 
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-export function ContactList() {
+interface ContactListProps {
+  onClose?: () => void;
+}
+
+export function ContactList({ onClose }: ContactListProps) {
   const { 
     profile: currentUser, 
     language,
@@ -52,6 +56,7 @@ export function ContactList() {
           displayName: detail?.displayName || 'مستخدم',
           photoURL: detail?.photoURL || '',
           nameColor: detail?.nameColor || '',
+          specialColor: (detail as any)?.specialColor || null,
           isVerified: !!detail?.isVerified,
           phoneNumber: detail?.phoneNumber || ''
         } as UserProfile;
@@ -64,7 +69,7 @@ export function ContactList() {
 
     const friendIds = currentUser.friends || [];
     const detailsMap = currentUser.friendDetails || {};
-    const missingIds = friendIds.filter(id => id && id !== currentUser.uid && !detailsMap[id] && !processedMissingIds.current.has(id));
+    const missingIds = friendIds.filter(id => id && id !== currentUser.uid && (!detailsMap[id] || (detailsMap[id] as any).specialColor === undefined) && !processedMissingIds.current.has(id));
 
     if (missingIds.length > 0) {
       const fetchMissing = async () => {
@@ -89,6 +94,7 @@ export function ContactList() {
                 displayName: data.displayName || 'مستخدم',
                 photoURL: data.photoURL || '',
                 nameColor: data.nameColor || '',
+                specialColor: data.specialColor || null,
                 isVerified: !!data.isVerified,
                 phoneNumber: data.phoneNumber || ''
               };
@@ -99,9 +105,11 @@ export function ContactList() {
           }
         }
 
+/* Commented out to save Quota - fetching satisfies local view
         if (Object.keys(batchUpdates).length > 0) {
           updateDoc(doc(db, 'users', currentUser.uid), batchUpdates).catch(console.error);
         }
+        */
       };
       fetchMissing();
     }
@@ -114,6 +122,7 @@ export function ContactList() {
         displayName: u.displayName || 'مستخدم',
         photoURL: u.photoURL || '',
         nameColor: u.nameColor || '',
+        specialColor: u.specialColor || null,
         isVerified: u.isVerified || false,
         phoneNumber: u.phoneNumber || ''
       };
@@ -359,6 +368,7 @@ export function ContactList() {
             displayName: target.displayName || 'مستخدم تلي عراق',
             photoURL: target.photoURL || '',
             nameColor: target.nameColor || '',
+            specialColor: target.specialColor || null,
             isVerified: !!target.isVerified,
             phoneNumber: target.phoneNumber || ''
           }
@@ -433,6 +443,7 @@ export function ContactList() {
 
       if (existing) {
         setActiveChatId(existing.id);
+        onClose?.();
       } else {
         const newChat = {
           participants: [currentUser.uid, target.uid],
@@ -457,6 +468,7 @@ export function ContactList() {
         };
         const ref = await addDoc(collection(db, 'chats'), newChat);
         setActiveChatId(ref.id);
+        onClose?.();
       }
     } catch (err) {
       console.error("Error starting chat:", err);
@@ -542,7 +554,7 @@ export function ContactList() {
       </AnimatePresence>
 
       {/* Contacts List */}
-      <ScrollArea className="flex-1 min-h-0 relative">
+      <div className="flex-1 min-h-0 relative overflow-y-auto no-scrollbar scroll-smooth">
         <GroupedVirtuoso
           style={{ height: '100%' }}
           data={contactsData.list}
@@ -618,49 +630,57 @@ export function ContactList() {
                     )}
                   </div>
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <p className={`font-bold text-sm truncate ${getNameColorClass(user.nameColor)}`} style={{ color: isMagicColor(user.nameColor) ? undefined : (user.nameColor || 'inherit') }}>
-                        {user.displayName}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <p className={`font-bold text-sm truncate ${getNameColorClass(user.specialColor || user.nameColor, (user as any).specialColorExpiry)}`} style={{ color: isMagicColor(user.specialColor || user.nameColor, (user as any).specialColorExpiry) ? undefined : (user.nameColor || 'inherit') }}>
+                          {user.displayName}
+                        </p>
+                        {user.uid === currentUser?.uid && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-bold">أنت</span>}
+                        {searchQuery && !currentUser?.friends?.includes(user.uid) && user.uid !== currentUser?.uid && (
+                          <span className="text-[9px] bg-green-500/10 text-green-600 px-1.5 py-0.5 rounded-full font-bold">جديد</span>
+                        )}
+                        {/* New: Confirm Request Label */}
+                        {!currentUser?.friends?.includes(user.uid) && (user as any).friends?.includes(currentUser?.uid) && (
+                          <span className="text-[10px] bg-blue-500/10 text-blue-600 px-2 py-0.5 rounded-full font-black animate-pulse">أضافك</span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground truncate font-medium">
+                        {(user as any).username ? `@${(user as any).username}` : (user.status || (user.phoneNumber ? user.phoneNumber : 'متوفر'))}
                       </p>
-                      {user.uid === currentUser?.uid && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-bold">أنت</span>}
-                      {searchQuery && !currentUser?.friends?.includes(user.uid) && user.uid !== currentUser?.uid && (
-                        <span className="text-[9px] bg-green-500/10 text-green-600 px-1.5 py-0.5 rounded-full font-bold">جديد</span>
-                      )}
                     </div>
-                    <p className="text-[10px] text-muted-foreground truncate font-medium">
-                      {(user as any).username ? `@${(user as any).username}` : (user.status || (user.phoneNumber ? user.phoneNumber : 'متوفر'))}
-                    </p>
-                  </div>
 
-                  <div className={`flex items-center gap-1 transition-opacity ${searchQuery ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="rounded-full hover:bg-primary/10 text-primary h-10 w-10"
-                      onClick={(e) => { e.stopPropagation(); startChat(user); }}
-                    >
-                      <MessageSquare className="w-5 h-5" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className={`rounded-full h-10 w-10 ${currentUser?.friends?.includes(user.uid) ? 'text-destructive hover:bg-destructive/10' : 'text-primary hover:bg-primary/10'}`}
-                      onClick={(e) => onToggleClick(e, user)}
-                      disabled={isUpdatingFriend === user.uid}
-                    >
-                      {isUpdatingFriend === user.uid ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        currentUser?.friends?.includes(user.uid) ? <UserMinus className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />
-                      )}
-                    </Button>
-                  </div>
+                    <div className={`flex items-center gap-1 transition-opacity ${searchQuery || (!currentUser?.friends?.includes(user.uid) && (user as any).friends?.includes(currentUser?.uid)) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="rounded-full hover:bg-primary/10 text-primary h-10 w-10"
+                        onClick={(e) => { e.stopPropagation(); startChat(user); }}
+                      >
+                        <MessageSquare className="w-5 h-5" />
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className={`rounded-full h-10 w-10 ${currentUser?.friends?.includes(user.uid) ? 'text-destructive hover:bg-destructive/10' : 'text-primary hover:bg-primary/10 shadow-lg shadow-primary/20 bg-primary/5'}`}
+                        onClick={(e) => onToggleClick(e, user)}
+                        disabled={isUpdatingFriend === user.uid}
+                      >
+                        {isUpdatingFriend === user.uid ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          currentUser?.friends?.includes(user.uid) 
+                            ? <UserMinus className="w-5 h-5" /> 
+                            : (user as any).friends?.includes(currentUser?.uid) 
+                                ? <UserCheck className="w-5 h-5 animate-bounce text-green-500" /> 
+                                : <UserPlus className="w-5 h-5" />
+                        )}
+                      </Button>
+                    </div>
                 </motion.div>
               </div>
             )}
           />
-      </ScrollArea>
+      </div>
 
       <Dialog open={!!confirmingContact} onOpenChange={(open) => !open && setConfirmingContact(null)}>
         <DialogContent className="sm:max-w-[400px] rounded-3xl p-0 overflow-hidden border-none shadow-2xl" dir="rtl">

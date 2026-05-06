@@ -5,8 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function getNameColorClass(nameColor: string | undefined | null) {
+export function getNameColorClass(nameColor: string | undefined | null, expiry?: any) {
   if (!nameColor || typeof nameColor !== 'string') return '';
+  
+  // Check expiry if provided
+  if (expiry) {
+    const expiryTime = typeof expiry === 'number' ? expiry : (expiry.toMillis ? expiry.toMillis() : 0);
+    if (expiryTime > 0 && Date.now() > expiryTime) return '';
+  }
   
   if (nameColor === 'magic') return 'magic-color-text';
   if (nameColor === 'magic_neon') return 'magic-neon-orange-text';
@@ -25,11 +31,21 @@ export function getNameColorClass(nameColor: string | undefined | null) {
   if (nameColor === 'animated-gold') return 'animated-gold-text';
   if (nameColor === 'animated-silver') return 'animated-silver-text';
   if (nameColor === 'animated-rainbow') return 'animated-rainbow-text';
+  if (nameColor === 'animated-carbon') return 'animated-carbon-text';
+  if (nameColor === 'animated-neon-yellow') return 'animated-neon-yellow-text';
+  if (nameColor === 'animated-fire') return 'animated-fire-text';
+  if (nameColor === 'animated-neon-red') return 'animated-neon-red-text';
   
   return '';
 }
 
-export function isMagicColor(nameColor: string | undefined | null) {
+export function isMagicColor(nameColor: string | undefined | null, expiry?: any) {
   if (!nameColor || typeof nameColor !== 'string') return false;
+
+  if (expiry) {
+    const expiryTime = typeof expiry === 'number' ? expiry : (expiry.toMillis ? expiry.toMillis() : 0);
+    if (expiryTime > 0 && Date.now() > expiryTime) return false;
+  }
+
   return nameColor.startsWith('magic') || nameColor.startsWith('animated-');
 }

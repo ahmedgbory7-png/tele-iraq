@@ -51,7 +51,13 @@ interface CallSystemProps {
 const servers = {
   iceServers: [
     {
-      urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'],
+      urls: [
+        'stun:stun1.l.google.com:19302',
+        'stun:stun2.l.google.com:19302',
+        'stun:stun3.l.google.com:19302',
+        'stun:stun4.l.google.com:19302',
+        'stun:stun.l.google.com:19302'
+      ],
     },
   ],
   iceCandidatePoolSize: 10,
@@ -166,9 +172,11 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
           const receiverCandidatesCollection = collection(callDoc, 'receiverCandidates');
 
         peerConnection.onicecandidate = (event) => {
-          if (event.candidate) {
+          if (event.candidate && !useStore.getState().quotaExceeded) {
             console.log("Adding local ICE candidate to Firestore");
-            addDoc(callerCandidatesCollection, event.candidate.toJSON());
+            addDoc(callerCandidatesCollection, event.candidate.toJSON()).catch(err => {
+              if (err.code === 'resource-exhausted') useStore.getState().setQuotaExceeded(true);
+            });
           }
         };
 
@@ -227,9 +235,11 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
         const receiverCandidatesCollection = collection(callDoc, 'receiverCandidates');
 
         peerConnection.onicecandidate = (event) => {
-          if (event.candidate) {
+          if (event.candidate && !useStore.getState().quotaExceeded) {
             console.log("Adding local receiver ICE candidate to Firestore");
-            addDoc(receiverCandidatesCollection, event.candidate.toJSON());
+            addDoc(receiverCandidatesCollection, event.candidate.toJSON()).catch(err => {
+              if (err.code === 'resource-exhausted') useStore.getState().setQuotaExceeded(true);
+            });
           }
         };
 
@@ -410,7 +420,7 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
               <Avatar className="h-44 w-44 border-4 border-white/10">
                 <AvatarImage src={otherProfile?.photoURL} />
                 <AvatarFallback className="bg-slate-800 text-4xl">
-                  {otherProfile?.displayName?.slice(0, 2).toUpperCase()}
+                  {(otherProfile?.displayName?.slice(0, 2) || '').toUpperCase()}
                 </AvatarFallback>
               </Avatar>
             </motion.div>
@@ -537,7 +547,7 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 pointer-events-none p-4">
            <Avatar className="h-20 w-20 border-2 border-primary/30 mb-2">
               <AvatarImage src={otherProfile?.photoURL} />
-              <AvatarFallback>{otherProfile?.displayName?.slice(0,2)}</AvatarFallback>
+              <AvatarFallback>{otherProfile?.displayName?.slice(0,2) || ''}</AvatarFallback>
            </Avatar>
            <p className="text-[10px] text-primary font-black uppercase tracking-[0.2em] animate-pulse">مكالمة نشطة</p>
         </div>

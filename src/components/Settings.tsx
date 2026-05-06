@@ -96,7 +96,7 @@ export function Settings() {
   const [activeTab, setActiveTab] = useState('appearance');
   const [isClearingCache, setIsClearingCache] = useState(false);
 
-  const isDeveloperUser = profile.isDeveloper || user?.email === 'isofiq@teleiraq.app';
+  const isDeveloperUser = profile.isDeveloper || user?.email === 'isofiq@teleiraq.app' || user?.email === 'ahmedgbory7@gmail.com';
 
   const handleClearCache = () => {
     if (!window.confirm((t as any).clearCache + '؟')) return;
@@ -296,7 +296,7 @@ export function Settings() {
               </AvatarFallback>
             </Avatar>
             <div className="flex-1">
-              <h3 className={`font-bold text-base ${getNameColorClass(profile.nameColor)}`} style={{ color: isMagicColor(profile.nameColor) ? undefined : (profile.nameColor || 'inherit') }}>
+              <h3 className={`font-bold text-base ${getNameColorClass(profile.specialColor || profile.nameColor, (profile as any).specialColorExpiry)}`} style={{ color: isMagicColor(profile.specialColor|| profile.nameColor, (profile as any).specialColorExpiry) ? undefined : (profile.nameColor || 'inherit') }}>
                 {profile.displayName}
               </h3>
               <p className="text-xs text-muted-foreground">{profile.phoneNumber}</p>
@@ -798,11 +798,9 @@ export function Settings() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showDevPanel} onOpenChange={setShowDevPanel}>
-        <DialogContent className="max-w-2xl h-[90vh] p-0 overflow-hidden border-none shadow-2xl">
-          <DeveloperPanel onClose={() => setShowDevPanel(false)} />
-        </DialogContent>
-      </Dialog>
+      {showDevPanel && (
+        <DeveloperPanel onClose={() => setShowDevPanel(false)} />
+      )}
     </div>
   );
 }

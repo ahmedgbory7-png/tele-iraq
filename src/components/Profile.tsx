@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '@/firebase';
-import { doc, updateDoc, getDoc, query, collection, where, getDocs, addDoc, serverTimestamp, orderBy, onSnapshot, deleteDoc, increment, writeBatch, arrayUnion, arrayRemove, deleteField } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, query, collection, where, getDocs, addDoc, serverTimestamp, orderBy, onSnapshot, deleteDoc, increment, writeBatch, arrayUnion, arrayRemove, deleteField, limit } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { ArrowRight, Camera, Check, Loader2, Lock, Plus, Trash2, Play, MessageSquare, User, BadgeCheck, UserPlus, UserMinus, Palette, LogOut } from 'lucide-react';
+import { ArrowRight, Camera, Check, Loader2, Lock, Plus, Trash2, Play, MessageSquare, User, BadgeCheck, UserPlus, UserMinus, Palette, LogOut, LayoutDashboard, CreditCard, Smartphone, ShoppingBag } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion, AnimatePresence } from 'motion/react';
@@ -17,12 +17,172 @@ import { useStore } from '@/store/useStore';
 import { getNameColorClass, isMagicColor } from '@/lib/utils';
 
 export function Profile() {
-  const { profile, setProfile, setShowProfile, setShowSettings, setCurrentTab, viewingProfileId, setViewingProfileId, setActiveChatId, language, setQuotaExceeded, quotaExceeded } = useStore();
+  const { profile, setProfile, setShowProfile, setShowSettings, setCurrentTab, viewingProfileId, setViewingProfileId, setActiveChatId, language, setQuotaExceeded, quotaExceeded, setShowUserDashboard } = useStore();
   const [targetProfile, setTargetProfile] = useState<UserProfile | null>(null);
   const [isOtherProfileLoading, setIsOtherProfileLoading] = useState(false);
   const [isUpdatingFriend, setIsUpdatingFriend] = useState(false);
   const [confirmingContact, setConfirmingContact] = useState<{ type: 'add' | 'remove' } | null>(null);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  const [showPurchaseDialog, setShowPurchaseDialog] = useState(false);
+  const [purchaseMethod, setPurchaseMethod] = useState<'list' | 'zain' | 'qi'>('list');
+  const [selectedColorToBuy, setSelectedColorToBuy] = useState<string | null>(null);
+  const [purchaseScreenshot, setPurchaseScreenshot] = useState<string | null>(null);
+  const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
+
+  const MAGIC_COLORS_FOR_PURCHASE = [
+    { name: 'لون كربوني 🖤', value: 'animated-carbon', class: 'bg-zinc-800' },
+    { name: 'بنفسجي سحري 🔮', value: 'animated-purple', class: 'bg-purple-600' },
+    { name: 'قوس قزح 🌈', value: 'animated-rainbow', class: 'bg-gradient-to-r from-red-500 via-green-500 to-blue-500' },
+    { name: 'اصفر فسفوري متحرك ⚡', value: 'animated-neon-yellow', class: 'bg-yellow-400 shadow-[0_0_15px_rgba(255,255,0,0.5)]' },
+    { name: 'ناري 🔥', value: 'animated-fire', class: 'bg-orange-600' },
+    { name: 'احمر متحرك فسفوري 🍓', value: 'animated-neon-red', class: 'bg-red-500 shadow-[0_0_15px_rgba(255,0,0,0.5)]' },
+    { name: 'الذهبي الملكي 👑', value: 'animated-gold', class: 'bg-amber-500' },
+    { name: 'الفضي اللامع 🥈', value: 'animated-silver', class: 'bg-zinc-400' },
+    { name: 'الأزرق المتحرك 💎', value: 'animated-blue', class: 'bg-blue-500' },
+    { name: 'الأخضر المتحرك 🐍', value: 'animated-green', class: 'bg-green-500' },
+    { name: 'الأحمر المتحرك 🍎', value: 'animated-red', class: 'bg-red-500' },
+    { name: 'اللون السحري ✨', value: 'magic', class: 'bg-gradient-to-br from-purple-500 to-pink-500' },
+    { name: 'نيون برتقالي 🍊', value: 'magic_neon', class: 'bg-orange-500' },
+    { name: 'أحمر أزرق 🔴🔵', value: 'magic_rb', class: 'bg-gradient-to-r from-red-500 to-blue-500' },
+    { name: 'وردي أسود 💗🖤', value: 'magic_pb', class: 'bg-gradient-to-r from-pink-500 to-zinc-950' },
+    { name: 'العراقي الأصيل 🇮🇶', value: 'magic_iraq', class: 'bg-red-600' },
+    { name: 'العراقي الفسفوري 🇮🇶⚡', value: 'magic_iraq_phosphor', class: 'bg-red-500 shadow-[0_0_10px_rgba(255,0,0,0.4)]' },
+    { name: 'نيون متحرك برتقالي 🟠', value: 'magic_neon_orange_moving', class: 'bg-orange-400' },
+    { name: 'نيون متحرك أخضر 🟢', value: 'magic_neon_green_moving', class: 'bg-green-400' },
+    { name: 'أحمر أصفر متحرك 🔴🟡', value: 'magic_red_yellow_moving', class: 'bg-gradient-to-r from-red-500 to-yellow-500' },
+    { name: 'فسفوري متحرك 🕯️', value: 'magic_phosphor_moving', class: 'bg-zinc-200' },
+  ];
+
+  const handleScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 950 * 1024) {
+        alert('الصورة كبيرة جداً. الحد الأقصى هو 1 ميجابايت.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPurchaseScreenshot(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSendPurchaseRequest = async () => {
+    if (!purchaseScreenshot) {
+      alert('يرجى إرفاق صورة الشاشة (سكرين شاشة) لتوثيق التحويل.');
+      return;
+    }
+
+    if (!profile) return;
+
+    setIsSubmittingPurchase(true);
+    try {
+      // 1. Find ISOFIQ's UID
+      const usersRef = collection(db, 'users');
+      const qUser = query(usersRef, where('email', '==', 'isofiq@teleiraq.app'), limit(1));
+      const userSnap = await getDocs(qUser);
+      
+      if (userSnap.empty) {
+        throw new Error("ISOFIQ account not found");
+      }
+      
+      const isofiqUser = userSnap.docs[0];
+      const isofiqUid = isofiqUser.id;
+      const isofiqData = isofiqUser.data();
+      
+      // 2. Find or create chat with ISOFIQ
+      const chatsRef = collection(db, 'chats');
+      const qChat = query(
+        chatsRef,
+        where('participants', 'array-contains', profile.uid)
+      );
+      const chatSnap = await getDocs(qChat);
+      const existingChat = chatSnap.docs.find(d => {
+        const parts = d.data().participants as string[];
+        return parts.includes(isofiqUid);
+      });
+      
+      let chatId: string;
+      
+      if (!existingChat) {
+        // Create new chat
+        const participants = [profile.uid, isofiqUid];
+        const participantProfiles = {
+          [profile.uid]: {
+            displayName: profile.displayName || 'مستخدم',
+            photoURL: profile.photoURL || '',
+            nameColor: profile.nameColor || '',
+            isVerified: !!profile.isVerified,
+            phoneNumber: profile.phoneNumber || ''
+          },
+          [isofiqUid]: {
+            displayName: isofiqData.displayName || 'ISOFIQ',
+            photoURL: isofiqData.photoURL || '',
+            nameColor: isofiqData.nameColor || '',
+            isVerified: true
+          }
+        };
+        
+        const docRef = await addDoc(chatsRef, {
+          participants,
+          participantProfiles,
+          updatedAt: serverTimestamp(),
+          lastMessage: {
+            text: 'بدأت محادثة جديدة',
+            senderId: profile.uid,
+            createdAt: serverTimestamp()
+          }
+        });
+        chatId = docRef.id;
+      } else {
+        chatId = existingChat.id;
+      }
+      
+      // 3. Send the message with screenshot details
+      const colorName = MAGIC_COLORS_FOR_PURCHASE.find(c => c.value === selectedColorToBuy)?.name || 'غير محدد';
+      const methodName = purchaseMethod === 'zain' ? 'زين كاش' : 'الكي كارد';
+
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        chatId: chatId,
+        text: `📦 طلب تفعيل لون سحري (${methodName})\nاللون المطلوب: ${colorName}\nالاسم: ${profile.displayName}\nالمعرف: @${(profile as any).username || 'N/A'}\nالرقم: ${profile.phoneNumber || 'N/A'}\nUID: ${profile.uid}`,
+        type: 'purchase_notice',
+        senderId: profile.uid,
+        createdAt: serverTimestamp()
+      });
+
+      // Send the screenshot as a separate message (image message)
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        chatId: chatId,
+        text: '📸 سكرين شاشة توثيق الشراء',
+        fileUrl: purchaseScreenshot,
+        senderId: profile.uid,
+        createdAt: serverTimestamp(),
+        type: 'image'
+      });
+      
+      // Update chat last message
+      await updateDoc(doc(db, 'chats', chatId), {
+        lastMessage: {
+          text: '✅ تم إرسال طلب شراء الألوان',
+          senderId: profile.uid,
+          createdAt: serverTimestamp()
+        },
+        updatedAt: serverTimestamp()
+      });
+
+      alert('✅ تم إرسال طلبك بنجاح إلى ISOFIQ. سيتم التفعيل قريباً!');
+      setShowPurchaseDialog(false);
+      setPurchaseMethod('list');
+      setPurchaseScreenshot(null);
+      setSelectedColorToBuy(null);
+    } catch (err) {
+      console.error("Purchase submission error:", err);
+      alert('❌ فشل إرسال الطلب. يرجى المحاولة مرة أخرى أو التواصل عبر الواتساب.');
+    } finally {
+      setIsSubmittingPurchase(false);
+    }
+  };
 
   const onClose = () => {
     setShowSettings(false);
@@ -67,6 +227,7 @@ export function Profile() {
           setBirthDate(data.birthDate || '');
           setCity(data.city || '');
           setHobbies(data.hobbies || '');
+          setSpecialColorExpiry(data.specialColorExpiry || null);
         }
         setIsOtherProfileLoading(false);
       }).catch(err => {
@@ -86,6 +247,7 @@ export function Profile() {
       setBirthDate(profile.birthDate || '');
       setCity(profile.city || '');
       setHobbies(profile.hobbies || '');
+      setSpecialColorExpiry(profile.specialColorExpiry || null);
     }
   }, [viewingProfileId, profile]);
   
@@ -103,116 +265,9 @@ export function Profile() {
   const [birthDate, setBirthDate] = useState('');
   const [city, setCity] = useState('');
   const [hobbies, setHobbies] = useState('');
+  const [specialColorExpiry, setSpecialColorExpiry] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
-  
-  const [isMagicUnlocked, setIsMagicUnlocked] = useState(false);
-  const [isMagic2Unlocked, setIsMagic2Unlocked] = useState(false);
-  const [isMagic3Unlocked, setIsMagic3Unlocked] = useState(false);
-  const [isMagic4Unlocked, setIsMagic4Unlocked] = useState(false);
-  const [isMagicIraqUnlocked, setIsMagicIraqUnlocked] = useState(false);
-  const [remainingDaysMagic, setRemainingDaysMagic] = useState<number | null>(null);
-  const [remainingDaysMagic2, setRemainingDaysMagic2] = useState<number | null>(null);
-  const [remainingDaysMagic3, setRemainingDaysMagic3] = useState<number | null>(null);
-  const [remainingDaysMagic4, setRemainingDaysMagic4] = useState<number | null>(null);
-  const [remainingDaysMagicIraq, setRemainingDaysMagicIraq] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (currentProfile?.magicUnlockedAt) {
-      const unlockDate = currentProfile.magicUnlockedAt.toDate ? currentProfile.magicUnlockedAt.toDate() : new Date(currentProfile.magicUnlockedAt);
-      const now = new Date();
-      const diffMs = unlockDate.getTime() + (30 * 24 * 60 * 60 * 1000) - now.getTime();
-      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      
-      if (days > 0) {
-        setIsMagicUnlocked(true);
-        setRemainingDaysMagic(days);
-      } else {
-        setIsMagicUnlocked(false);
-        setRemainingDaysMagic(0);
-      }
-    } else {
-      setIsMagicUnlocked(false);
-      setRemainingDaysMagic(null);
-    }
-
-    if (currentProfile?.magic2UnlockedAt) {
-      const unlockDate = currentProfile.magic2UnlockedAt.toDate ? currentProfile.magic2UnlockedAt.toDate() : new Date(currentProfile.magic2UnlockedAt);
-      const now = new Date();
-      const diffMs = unlockDate.getTime() + (30 * 24 * 60 * 60 * 1000) - now.getTime();
-      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      
-      if (days > 0) {
-        setIsMagic2Unlocked(true);
-        setRemainingDaysMagic2(days);
-      } else {
-        setIsMagic2Unlocked(false);
-        setRemainingDaysMagic2(0);
-      }
-    } else {
-      setIsMagic2Unlocked(false);
-      setRemainingDaysMagic2(null);
-    }
-
-    if (currentProfile?.magic3UnlockedAt) {
-      const unlockDate = currentProfile.magic3UnlockedAt.toDate ? currentProfile.magic3UnlockedAt.toDate() : new Date(currentProfile.magic3UnlockedAt);
-      const now = new Date();
-      const diffMs = unlockDate.getTime() + (30 * 24 * 60 * 60 * 1000) - now.getTime();
-      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      
-      if (days > 0) {
-        setIsMagic3Unlocked(true);
-        setRemainingDaysMagic3(days);
-      } else {
-        setIsMagic3Unlocked(false);
-        setRemainingDaysMagic3(0);
-      }
-    } else {
-      setIsMagic3Unlocked(false);
-      setRemainingDaysMagic3(null);
-    }
-
-    if (currentProfile?.magic4UnlockedAt) {
-      const unlockDate = currentProfile.magic4UnlockedAt.toDate ? currentProfile.magic4UnlockedAt.toDate() : new Date(currentProfile.magic4UnlockedAt);
-      const now = new Date();
-      const diffMs = unlockDate.getTime() + (30 * 24 * 60 * 60 * 1000) - now.getTime();
-      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      
-      if (days > 0) {
-        setIsMagic4Unlocked(true);
-        setRemainingDaysMagic4(days);
-      } else {
-        setIsMagic4Unlocked(false);
-        setRemainingDaysMagic4(0);
-      }
-    } else {
-      setIsMagic4Unlocked(false);
-      setRemainingDaysMagic4(null);
-    }
-
-    if (currentProfile?.magicIraqUnlockedAt) {
-      const unlockDate = currentProfile.magicIraqUnlockedAt.toDate ? currentProfile.magicIraqUnlockedAt.toDate() : new Date(currentProfile.magicIraqUnlockedAt);
-      const now = new Date();
-      const diffMs = unlockDate.getTime() + (30 * 24 * 60 * 60 * 1000) - now.getTime();
-      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      
-      if (days > 0) {
-        setIsMagicIraqUnlocked(true);
-        setRemainingDaysMagicIraq(days);
-      } else {
-        setIsMagicIraqUnlocked(false);
-        setRemainingDaysMagicIraq(0);
-      }
-    } else {
-      setIsMagicIraqUnlocked(false);
-      setRemainingDaysMagicIraq(null);
-    }
-  }, [currentProfile]);
-
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [magicCode, setMagicCode] = useState('');
-  const [pendingMagicColor, setPendingMagicColor] = useState<string | null>(null);
-  const [isMagicDialogOpen, setIsMagicDialogOpen] = useState(false);
 
   const formatLastSeen = (p: UserProfile | null) => {
     if (!p) return 'متصل منذ وقت طويل';
@@ -249,25 +304,17 @@ export function Profile() {
 
   if (!currentProfile) return null;
 
-  const colors = [
-    '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', 
-    '#10b981', '#3b82f6', '#6366f1', '#141414',
-    '#f43f5e', '#a855f7', '#06b6d4', '#84cc16',
-    '#eab308', '#f97316', '#d946ef', '#1d4ed8',
-    '#2563eb', '#7c3aed', '#db2777', '#dc2626',
-    '#ea580c', '#ca8a04', '#16a34a', '#0891b2',
-    '#4f46e5', '#9333ea', '#c026d3', '#be123c',
-    '#b91c1c', '#9a3412', '#4338ca', '#1e40af',
-    '#000000', '#ff0000', '#008000', '#0000ff',
-    '#ffa500', '#39ff14', '#800080'
-  ];
-
   const propagateProfileUpdate = async (userData: Partial<UserProfile>) => {
     if (!profile?.uid) return;
     try {
-      const batch = writeBatch(db);
-      const chatsQ = query(collection(db, 'chats'), where('participants', 'array-contains', profile.uid));
+      const chatsQ = query(
+        collection(db, 'chats'), 
+        where('participants', 'array-contains', profile.uid),
+        orderBy('updatedAt', 'desc'),
+        limit(20)
+      );
       const chatsSnap = await getDocs(chatsQ);
+      const batch = writeBatch(db);
       
       const isVerifiedStatus = userData.isVerified !== undefined ? userData.isVerified : (isVerified || false);
 
@@ -278,119 +325,15 @@ export function Profile() {
             photoURL: userData.photoURL || photoURL || profile.photoURL || '',
             nameColor: userData.nameColor || nameColor || profile.nameColor || '',
             isVerified: isVerifiedStatus,
-            phoneNumber: profile.phoneNumber || ''
+            phoneNumber: profile.phoneNumber || '',
+            specialColorExpiry: userData.specialColorExpiry || specialColorExpiry || null
           }
         });
       });
 
-      await batch.commit();
+      if (chatsSnap.size > 0) await batch.commit();
     } catch (err) {
       console.error("Error propagating profile update:", err);
-    }
-  };
-
-  const handleColorClick = (color: string) => {
-    setNameColor(color);
-    // Auto-save color change
-    if (profile?.uid) {
-      if (quotaExceeded) return;
-      updateDoc(doc(db, 'users', profile.uid), { nameColor: color })
-        .then(() => propagateProfileUpdate({ nameColor: color }))
-        .catch(err => {
-          if (err.code === 'resource-exhausted') setQuotaExceeded(true);
-          console.error("Auto-save color error:", err);
-        });
-    }
-  };
-
-  const handleMagicColorClick = (color: string) => {
-    // If the color is already the active one, or if they are already verified/unlocked, just set it
-    // But the user wants it "locked with 900", so let's check unlock status
-    if (isVerified || isMagicUnlocked || isMagic2Unlocked || isMagic3Unlocked || isMagic4Unlocked || isMagicIraqUnlocked) {
-      setNameColor(color);
-      // Auto-save magic color change too
-      if (profile?.uid) {
-        updateDoc(doc(db, 'users', profile.uid), { nameColor: color })
-          .then(() => propagateProfileUpdate({ nameColor: color }))
-          .catch(err => console.error("Auto-save color error:", err));
-      }
-      return;
-    }
-    // We only set the pending color, not the active nameColor yet
-    setPendingMagicColor(color);
-    setIsMagicDialogOpen(true);
-  };
-
-  const handleUnlockCode = async () => {
-    const code = magicCode.trim().toUpperCase();
-    if (code === '900') {
-      try {
-        setLoading(true);
-        let newColor = pendingMagicColor || 'magic';
-
-        await updateDoc(doc(db, 'users', profile.uid), {
-          magicUnlockedAt: serverTimestamp(),
-          magic2UnlockedAt: serverTimestamp(),
-          magic3UnlockedAt: serverTimestamp(),
-          magic4UnlockedAt: serverTimestamp(),
-          magicIraqUnlockedAt: serverTimestamp(),
-          nameColor: newColor,
-          isVerified: true,
-          verifiedAt: serverTimestamp()
-        });
-        await propagateProfileUpdate({ nameColor: newColor, isVerified: true });
-        setIsMagicUnlocked(true);
-        setIsMagic2Unlocked(true);
-        setIsMagic3Unlocked(true);
-        setIsMagic4Unlocked(true);
-        setIsMagicIraqUnlocked(true);
-        setIsVerified(true);
-        setNameColor(newColor);
-        setIsMagicDialogOpen(false);
-        setSaved(true);
-        setMagicCode('');
-        setPendingMagicColor(null);
-        alert('✨ تم تفعيل الميزات المميزة واللون السحري وتوثيق حسابك بنجاح!');
-        setTimeout(() => setSaved(false), 2000);
-      } catch (err) {
-        console.error(err);
-        alert('فشل تفعيل الميزات المميزة. تأكد من اتصال الإنترنت.');
-      } finally {
-        setLoading(false);
-      }
-    } else if (code === '500') {
-      try {
-        setLoading(true);
-        if (pendingMagicColor) {
-          await updateDoc(doc(db, 'users', profile.uid), {
-            nameColor: pendingMagicColor,
-            isVerified: true,
-            verifiedAt: serverTimestamp()
-          });
-          setNameColor(pendingMagicColor);
-          setIsVerified(true);
-          await propagateProfileUpdate({ nameColor: pendingMagicColor, isVerified: true });
-          alert('✨ تم تفعيل اللون المختار وتوثيق حسابك بنجاح! تم قفل اللون المختار.');
-        } else {
-          await updateDoc(doc(db, 'users', profile.uid), {
-            isVerified: true,
-            verifiedAt: serverTimestamp()
-          });
-          setIsVerified(true);
-          await propagateProfileUpdate({ isVerified: true });
-          alert('✔️ تم توثيق حسابك بنجاح! تظهر الآن علامة التوثيق الزرقاء بجانب اسمك.');
-        }
-        setIsMagicDialogOpen(false);
-        setMagicCode('');
-        setPendingMagicColor(null);
-      } catch (err) {
-        console.error(err);
-        alert('فشل تفعيل الميزة.');
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      alert('الكود غير صحيح! يرجى التأكد من الكود والمحاولة مرة أخرى.');
     }
   };
 
@@ -536,7 +479,7 @@ export function Profile() {
   ];
 
   return (
-    <div className="flex flex-col h-full bg-background overflow-y-auto no-scrollbar" dir="rtl">
+    <div className="flex flex-col h-full bg-background overflow-y-auto no-scrollbar scroll-smooth" dir="rtl">
       {/* Immersive Header (Telegram Style) */}
       <div className="relative h-80 shrink-0 overflow-hidden">
         <div className="absolute inset-0 bg-zinc-950">
@@ -635,18 +578,13 @@ export function Profile() {
             animate={{ scale: 1, opacity: 1 }}
             className="flex flex-col items-center gap-1"
           >
-            <h1 className={`text-3xl font-bold tracking-tight flex items-center gap-1.5 ${getNameColorClass(nameColor)}`} 
-              style={{ color: isMagicColor(nameColor) ? undefined : (nameColor || 'white') }}
+            <h1 className={`text-3xl font-bold tracking-tight flex items-center gap-1.5 ${getNameColorClass(nameColor, specialColorExpiry)}`} 
+              style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : (nameColor || 'white') }}
             >
               {displayName || 'مستخدم تلي عراق'}
               {isVerified ? (
                 <BadgeCheck className="w-6 h-6 text-blue-500 fill-blue-500/10" />
-              ) : isMe && (
-                <BadgeCheck 
-                  className="w-6 h-6 text-white/30 cursor-pointer hover:text-white/50 transition-colors" 
-                  onClick={() => setIsMagicDialogOpen(true)}
-                />
-              )}
+              ) : null}
               {isMe && (
                 <div className="flex items-center bg-white/10 px-2 py-0.5 rounded-full">
                   <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse mr-1.5" />
@@ -711,13 +649,8 @@ export function Profile() {
                             className={`h-12 bg-muted/20 border-border/40 rounded-2xl text-center font-bold text-lg flex-1 ${getNameColorClass(nameColor)}`}
                             style={{ color: isMagicColor(nameColor) ? undefined : nameColor }}
                           />
-                          {isVerified ? (
+                          {isVerified && (
                             <BadgeCheck className="w-6 h-6 text-blue-500 fill-blue-500/20 shrink-0" />
-                          ) : (
-                            <BadgeCheck 
-                              className="w-6 h-6 text-muted-foreground/30 cursor-pointer hover:text-muted-foreground/50 transition-colors shrink-0" 
-                              onClick={() => setIsMagicDialogOpen(true)}
-                            />
                           )}
                         </div>
                       </div>
@@ -929,163 +862,6 @@ export function Profile() {
         <div className="p-6 flex flex-col gap-6 max-w-sm mx-auto">
           {isMe ? (
             <>
-              <div className="space-y-4">
-                <Button 
-                  variant="outline"
-                  onClick={() => setShowColorPicker(!showColorPicker)}
-                  className="w-full h-14 rounded-2xl border-2 border-primary/20 bg-primary/5 hover:bg-primary/10 flex items-center justify-between px-6 transition-all active:scale-[0.98] group"
-                >
-                  <div className="flex items-center gap-3">
-                    <Palette className="w-6 h-6 text-primary" />
-                    <span className="font-black text-primary text-base">تغيير لون الاسم المميز</span>
-                  </div>
-                  <motion.div animate={{ rotate: showColorPicker ? 180 : 0 }}>
-                    <ArrowRight className="h-5 w-5 text-primary rotate-90" />
-                  </motion.div>
-                </Button>
-
-                <AnimatePresence>
-                  {showColorPicker && (
-                    <motion.div 
-                      initial={{ height: 0, opacity: 0, scale: 0.95 }}
-                      animate={{ height: 'auto', opacity: 1, scale: 1 }}
-                      exit={{ height: 0, opacity: 0, scale: 0.95 }}
-                      className="overflow-hidden space-y-6 pt-2"
-                    >
-                      {/* Current Color Preview */}
-                      <div className="bg-muted/20 p-4 rounded-2xl border border-border/40 flex items-center justify-center gap-4">
-                        <div 
-                          className={`w-10 h-10 rounded-full border-4 border-white/20 shadow-xl ${
-                            nameColor === 'magic' ? 'magic-color-bg' : 
-                            nameColor === 'magic_neon' ? 'magic-neon-orange-bg' : 
-                            nameColor === 'magic_rb' ? 'magic-red-blue-bg' : 
-                            nameColor === 'magic_pb' ? 'magic-pink-black-bg' : 
-                            nameColor === 'magic_iraq' ? 'magic-iraq-bg' : 
-                            nameColor === 'magic_iraq_phosphor' ? 'magic-iraq-phosphor-bg' :
-                            nameColor === 'magic_neon_orange_moving' ? 'magic-neon-orange-moving-bg' :
-                            nameColor === 'magic_neon_green_moving' ? 'magic-neon-green-moving-bg' :
-                            nameColor === 'magic_red_yellow_moving' ? 'magic-red-yellow-moving-bg' :
-                            nameColor === 'magic_phosphor_moving' ? 'magic-phosphor-moving-bg' :
-                            nameColor === 'animated-green' ? 'animated-green-bg' :
-                            nameColor === 'animated-red' ? 'animated-red-bg' :
-                            nameColor === 'animated-blue' ? 'animated-blue-bg' :
-                            nameColor === 'animated-purple' ? 'animated-purple-bg' :
-                            nameColor === 'animated-gold' ? 'animated-gold-bg' :
-                            nameColor === 'animated-silver' ? 'animated-silver-bg' :
-                            nameColor === 'animated-rainbow' ? 'animated-rainbow-bg' : ''
-                          }`} 
-                          style={{ backgroundColor: (nameColor && (nameColor.startsWith('magic') || nameColor.startsWith('animated-'))) ? undefined : nameColor }}
-                        />
-                        <div className="flex flex-col">
-                          <span className="text-[10px] text-muted-foreground uppercase font-black tracking-widest">اللون النشط</span>
-                          <span className={`font-black text-lg ${
-                            nameColor === 'magic' ? 'magic-color-text' : 
-                            nameColor === 'magic_neon' ? 'magic-neon-orange-text' : 
-                            nameColor === 'magic_rb' ? 'magic-red-blue-text' : 
-                            nameColor === 'magic_pb' ? 'magic-pink-black-text' : 
-                            nameColor === 'magic_iraq' ? 'magic-iraq-text' : 
-                            nameColor === 'magic_iraq_phosphor' ? 'magic-iraq-phosphor-text' :
-                            nameColor === 'magic_neon_orange_moving' ? 'magic-neon-orange-moving-text' :
-                            nameColor === 'magic_neon_green_moving' ? 'magic-neon-green-moving-text' :
-                            nameColor === 'magic_red_yellow_moving' ? 'magic-red-yellow-moving-text' :
-                            nameColor === 'magic_phosphor_moving' ? 'magic-phosphor-moving-text' :
-                            nameColor === 'animated-green' ? 'animated-green-text' :
-                            nameColor === 'animated-red' ? 'animated-red-text' :
-                            nameColor === 'animated-blue' ? 'animated-blue-text' :
-                            nameColor === 'animated-purple' ? 'animated-purple-text' :
-                            nameColor === 'animated-gold' ? 'animated-gold-text' :
-                            nameColor === 'animated-silver' ? 'animated-silver-text' :
-                            nameColor === 'animated-rainbow' ? 'animated-rainbow-text' : ''
-                          }`} style={{ color: (nameColor && (nameColor.startsWith('magic') || nameColor.startsWith('animated-'))) ? undefined : nameColor === '#141414' ? 'white' : nameColor }}>
-                            {nameColor === 'magic' ? 'سحري (RGB)' : 
-                             nameColor === 'magic_neon' ? 'سحري (فسفوري)' : 
-                             nameColor === 'magic_rb' ? 'سحري (أحمر وأزرق)' : 
-                             nameColor === 'magic_pb' ? 'سحري (وردي وأسود)' : 
-                             nameColor === 'magic_iraq' ? 'سحري (عـلم العراق)' : 
-                             nameColor === 'magic_iraq_phosphor' ? 'فسفوري العلم العراقي (متحرك)' :
-                             nameColor === 'magic_neon_orange_moving' ? 'فسفوري برتقالي (متحرك)' :
-                             nameColor === 'magic_neon_green_moving' ? 'فسفوري أخضر (متحرك)' :
-                             nameColor === 'magic_red_yellow_moving' ? 'أحمر وأصفر (متحرك)' :
-                             nameColor === 'magic_phosphor_moving' ? 'فسفوري (متحرك)' :
-                             nameColor === 'animated-green' ? 'أخضر متحرك' : 
-                             nameColor === 'animated-red' ? 'أحمر متحرك' :
-                             nameColor === 'animated-blue' ? 'أزرق متحرك' :
-                             nameColor === 'animated-purple' ? 'أرجواني متحرك' :
-                             nameColor === 'animated-gold' ? 'ذهبي ملكي (متحرك)' :
-                             nameColor === 'animated-silver' ? 'فضي براق (متحرك)' :
-                             nameColor === 'animated-rainbow' ? 'ألوان الطيف (متحرك)' : 'لون مخصص'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <h4 className="text-[10px] font-black text-muted-foreground px-1 uppercase tracking-[0.15em] flex items-center gap-2 mb-2">
-                          <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
-                          الألوان الأساسية
-                        </h4>
-                        <div className="flex flex-wrap gap-2 justify-center px-2 py-3 bg-muted/20 rounded-2xl border border-border/50">
-                          {colors.map(color => (
-                            <button
-                              key={color}
-                              onClick={() => handleColorClick(color)}
-                              className={`w-9 h-9 rounded-full border-2 transition-all hover:scale-110 active:scale-95 shadow-sm ${nameColor === color ? 'border-primary ring-2 ring-primary/20 shadow-md scale-110' : 'border-background'}`}
-                              style={{ backgroundColor: color }}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                        
-                      <div className="space-y-4">
-                        <h4 className="text-[10px] font-black text-primary px-1 uppercase tracking-[0.15em] flex items-center gap-2 mb-2">
-                          <div className="w-1.5 h-1.5 rounded-full bg-primary/40 animate-pulse" />
-                          الألوان السحرية المتحركة ✨
-                        </h4>
-                        <div className="flex flex-wrap gap-3 justify-center px-4 py-5 bg-primary/5 rounded-[2rem] border border-primary/10 relative overflow-hidden">
-                          {[
-                            { id: 'magic', className: 'magic-color-bg' },
-                            { id: 'magic_neon', className: 'magic-neon-orange-bg' },
-                            { id: 'magic_rb', className: 'magic-red-blue-bg' },
-                            { id: 'magic_pb', className: 'magic-pink-black-bg' },
-                            { id: 'magic_iraq', className: 'magic-iraq-bg' },
-                            { id: 'magic_iraq_phosphor', className: 'magic-iraq-phosphor-bg' },
-                            { id: 'magic_neon_orange_moving', className: 'magic-neon-orange-moving-bg' },
-                            { id: 'magic_neon_green_moving', className: 'magic-neon-green-moving-bg' },
-                            { id: 'magic_red_yellow_moving', className: 'magic-red-yellow-moving-bg' },
-                            { id: 'magic_phosphor_moving', className: 'magic-phosphor-moving-bg' },
-                            { id: 'animated-green', className: 'animated-green-bg' },
-                            { id: 'animated-red', className: 'animated-red-bg' },
-                            { id: 'animated-blue', className: 'animated-blue-bg' },
-                            { id: 'animated-purple', className: 'animated-purple-bg' },
-                            { id: 'animated-gold', className: 'animated-gold-bg' },
-                            { id: 'animated-silver', className: 'animated-silver-bg' },
-                            { id: 'animated-rainbow', className: 'animated-rainbow-bg' }
-                          ].map((magic) => (
-                            <button
-                              key={magic.id}
-                              onClick={() => handleMagicColorClick(magic.id)}
-                              className={`w-11 h-11 rounded-full border-2 transition-all hover:scale-110 active:scale-95 shadow-md ${magic.className} group/btn relative overflow-hidden ${nameColor === magic.id ? 'border-primary ring-2 ring-primary/30 shadow-xl scale-110 z-10' : 'border-transparent opacity-90 hover:opacity-100'}`}
-                            >
-                              {(!isVerified || nameColor !== magic.id) && (
-                                <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center transition-all group-hover/btn:bg-black/20">
-                                  <Lock className="w-3.5 h-3.5 text-white/90" />
-                                </div>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-[9px] text-muted-foreground text-center animate-pulse">تحتاج هذه الألوان إلى كود تفعيل لتثبيتها على اسمك ✨</p>
-                      </div>
-
-                      {nameColor && (nameColor.startsWith('magic') || nameColor.startsWith('animated')) && (
-                        <div className="bg-primary/5 p-4 rounded-2xl border border-primary/10 text-center animate-in fade-in slide-in-from-bottom-2 duration-300">
-                          <p className="text-sm font-bold text-primary mb-1">اللون السحري نشط ✨</p>
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
               <Button 
                 onClick={handleSave} 
                 className={`w-full h-16 text-xl font-black rounded-2xl transition-all shadow-2xl active:scale-[0.95] ${saved ? 'bg-green-500 hover:bg-green-600' : 'purple-gradient'}`}
@@ -1093,6 +869,15 @@ export function Profile() {
               >
                 {loading ? <Loader2 className="animate-spin ml-2 h-6 w-6" /> : saved ? <Check className="ml-2 h-6 w-6" /> : null}
                 {saved ? 'تم الحفظ بنجاح' : 'حفظ المعلومات كاملة'}
+              </Button>
+
+              <Button 
+                variant="outline"
+                onClick={() => setShowPurchaseDialog(true)} 
+                className="w-full h-14 text-base font-black rounded-2xl transition-all border-primary/20 bg-primary/10 text-primary hover:bg-primary/20 active:scale-[0.95] flex items-center justify-center gap-2 mb-2"
+              >
+                <ShoppingBag className="h-6 w-6" />
+                طريقة شراء الألوان السحرية
               </Button>
 
               <Button 
@@ -1118,38 +903,6 @@ export function Profile() {
             </div>
           )}
         </div>
-
-      {/* Magic Dialog */}
-      <Dialog open={isMagicDialogOpen} onOpenChange={setIsMagicDialogOpen}>
-        <DialogContent className="sm:max-w-md" dir="rtl">
-          <DialogHeader className="text-center p-2">
-            <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-2">
-              <Lock className="w-8 h-8 text-primary" />
-            </div>
-            <DialogTitle className="text-2xl font-black">تفعيل الألوان المتحركة 🌈✨</DialogTitle>
-          </DialogHeader>
-          <div className="py-2 space-y-4 text-center">
-            <p className="text-sm text-foreground font-bold leading-relaxed bg-primary/10 p-4 rounded-xl border border-primary/20">
-              أدخل كود التفعيل <span className="text-primary text-xl font-black">900</span> لفتح اللون المختار وتثبيته على اسمك وتوثيق حسابك.
-            </p>
-            <div className="bg-muted/30 p-4 rounded-2xl border border-border/40">
-              <Input 
-                placeholder="---" 
-                value={magicCode}
-                onChange={(e) => setMagicCode(e.target.value.slice(0, 4))}
-                className="text-center font-mono tracking-[1em] h-14 text-2xl focus-visible:ring-primary bg-background border-2"
-                type="text"
-                inputMode="numeric"
-              />
-            </div>
-            <p className="text-xs text-muted-foreground italic font-medium">بواسطة المطور: أبو وطن</p>
-          </div>
-          <DialogFooter className="flex flex-row gap-2 sm:justify-end">
-            <Button variant="outline" onClick={() => setIsMagicDialogOpen(false)} className="flex-1 sm:flex-none h-12 rounded-xl">إلغاء</Button>
-            <Button onClick={handleUnlockCode} className="flex-1 sm:flex-none h-12 rounded-xl purple-gradient">تأكيد</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Confirmation Dialog */}
       <Dialog open={!!confirmingContact} onOpenChange={(open) => !open && setConfirmingContact(null)}>
@@ -1229,6 +982,203 @@ export function Profile() {
                 تأكيد الخروج
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Purchase Options Dialog */}
+      <Dialog open={showPurchaseDialog} onOpenChange={(open) => {
+        setShowPurchaseDialog(open);
+        if (!open) {
+          setPurchaseMethod('list');
+          setPurchaseScreenshot(null);
+          setSelectedColorToBuy(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-[450px] rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl bg-zinc-950 flex flex-col max-h-[90vh] md:max-h-[85vh]" dir="rtl">
+          <div className="p-8 space-y-6 overflow-y-auto no-scrollbar flex-1 touch-pan-y">
+            <div className="relative shrink-0 flex flex-col items-center justify-center pt-2">
+              <div className={`w-24 h-24 rounded-full bg-white/5 border-2 border-dashed border-white/10 flex flex-col items-center justify-center transition-all duration-500 ${selectedColorToBuy ? 'border-primary/50' : ''}`}>
+                {selectedColorToBuy ? (
+                  <div className="flex flex-col items-center gap-1">
+                    <span className={`text-2xl font-black ${getNameColorClass(selectedColorToBuy)}`}>
+                       {profile?.displayName?.split(' ')[0] || 'اسمك'}
+                    </span>
+                    <BadgeCheck className={`w-5 h-5 ${getNameColorClass(selectedColorToBuy)}`} />
+                  </div>
+                ) : (
+                  <ShoppingBag className="w-12 h-12 text-primary/50" />
+                )}
+              </div>
+
+              {purchaseMethod !== 'list' && (
+                <button 
+                  onClick={() => {
+                    setPurchaseMethod('list');
+                    setPurchaseScreenshot(null);
+                  }}
+                  className="absolute top-0 right-0 bg-zinc-900 border border-white/10 rounded-full p-2 text-white hover:bg-white/10 transition-colors shadow-lg"
+                >
+                  <ArrowRight className="w-4 h-4 rotate-180" />
+                </button>
+              )}
+              
+              {selectedColorToBuy && (
+                <div className="mt-4 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20">
+                  <span className="text-[10px] font-black text-primary uppercase tracking-widest">معاينة اللون المختار</span>
+                </div>
+              )}
+            </div>
+            
+            {purchaseMethod === 'list' ? (
+              <div className="space-y-6 pb-2">
+                <div className="space-y-2 text-center">
+                  <DialogTitle className="text-2xl font-black text-white">متجر الألوان السحرية</DialogTitle>
+                  <p className="text-muted-foreground font-bold text-sm">
+                    اختر اللون الذي يمثل هويتك وانطلق بتميز
+                  </p>
+                </div>
+
+                {/* Step 1: Select Color */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-black text-white pr-2 border-r-4 border-primary/50 h-5 flex items-center">1. اختر اللون السحري:</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    {MAGIC_COLORS_FOR_PURCHASE.map(c => (
+                      <button
+                        key={c.value}
+                        onClick={() => setSelectedColorToBuy(c.value)}
+                        className={`p-4 rounded-3xl border transition-all flex flex-col items-center gap-2 group relative overflow-hidden ${selectedColorToBuy === c.value ? 'bg-primary/20 border-primary shadow-[0_0_20px_rgba(139,92,246,0.2)]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                      >
+                        {selectedColorToBuy === c.value && (
+                          <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent pointer-events-none" />
+                        )}
+                        <div className={`w-10 h-10 rounded-full shrink-0 shadow-lg ${c.class} transition-transform duration-300 group-hover:scale-110`} />
+                        <span className="text-[11px] font-black text-white truncate text-center">{c.name}</span>
+                        {selectedColorToBuy === c.value && (
+                          <div className="absolute top-2 right-2">
+                            <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+                               <Check className="w-2.5 h-2.5 text-white" />
+                            </div>
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Step 2: Select Method */}
+                <div className={`space-y-4 transition-all duration-500 transform ${!selectedColorToBuy ? 'opacity-30 pointer-events-none grayscale translate-y-4' : 'translate-y-0'}`}>
+                  <h3 className="text-sm font-black text-white pr-2 border-r-4 border-primary/50 h-5 flex items-center">2. اختر وسيلة الدفع:</h3>
+                  <div 
+                    onClick={() => setPurchaseMethod('zain')}
+                    className="p-4 rounded-3xl bg-white/5 border border-white/10 flex items-center gap-4 group hover:bg-white/10 transition-all cursor-pointer hover:border-primary/50"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-primary/20 flex items-center justify-center text-primary shrink-0">
+                      <Smartphone className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 shrink-0">
+                      <h4 className="font-black text-white">زين كاش (Zain Cash)</h4>
+                      <p className="text-[10px] text-muted-foreground font-bold">تحويل مباشر إلى محفظة التطبيق</p>
+                    </div>
+                    <div className="bg-primary/20 px-3 py-1 rounded-lg border border-primary/30">
+                       <span className="text-xs font-black text-primary">متاح</span>
+                    </div>
+                  </div>
+
+                  <div 
+                    onClick={() => setPurchaseMethod('qi')}
+                    className="p-4 rounded-3xl bg-white/5 border border-white/10 flex items-center gap-4 group hover:bg-white/10 transition-all cursor-pointer hover:border-blue-500/50"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-blue-500/20 flex items-center justify-center text-blue-500 shrink-0">
+                      <CreditCard className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 shrink-0">
+                      <h4 className="font-black text-white">كي كارد الرافدين (Qi Card)</h4>
+                      <p className="text-[10px] text-muted-foreground font-bold">الدفع عبر بطاقات الكي كارد والماستر كارد</p>
+                    </div>
+                    <div className="bg-blue-500/20 px-3 py-1 rounded-lg border border-blue-500/30">
+                       <span className="text-xs font-black text-blue-500">متاح</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-primary/10 p-5 rounded-[2rem] border border-primary/20 space-y-3 text-center">
+                  <p className="text-xs font-black text-primary leading-relaxed">
+                    لإتمام عملية الشراء والحصول على الكود الخاص بك، يرجى التواصل مع الإدارة
+                  </p>
+                  <Button 
+                    className="w-full h-12 rounded-xl bg-primary hover:bg-primary/90 text-white font-black gap-2 shadow-lg"
+                    onClick={() => window.open('https://wa.me/9647745121483', '_blank')}
+                  >
+                    تواصل عبر واتساب
+                  </Button>
+                </div>
+              </div>
+            ) : (purchaseMethod === 'zain' || purchaseMethod === 'qi') ? (
+              <div className="space-y-6">
+                <div className="text-center space-y-2">
+                  <h3 className="text-2xl font-black text-white">
+                    {purchaseMethod === 'zain' ? 'التحويل عبر زين كاش' : 'التحويل عبر الكي كارد'}
+                  </h3>
+                  <p className="text-muted-foreground font-bold text-sm">
+                    قم بالتحويل على هذا الرقم لطلب تفعيل اللون
+                  </p>
+                </div>
+
+                <div className="bg-primary/10 p-6 rounded-[2rem] border-2 border-dashed border-primary/30 flex flex-col items-center gap-2">
+                  <span className="text-3xl font-black text-primary tracking-widest">07745121483</span>
+                  <p className="text-xs font-bold text-primary/70 italic text-center">باسم: أبو وطن</p>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="block text-sm font-black text-white text-right pr-2">إرفاق سكرين شاشة (توثيق الشراء):</label>
+                  <div 
+                    onClick={() => document.getElementById('screenshot-upload')?.click()}
+                    className={`h-32 rounded-3xl border-2 border-dashed transition-all flex flex-col items-center justify-center gap-2 cursor-pointer overflow-hidden ${purchaseScreenshot ? 'border-primary bg-primary/5' : 'border-white/10 hover:border-primary/50 bg-white/5'}`}
+                  >
+                    {purchaseScreenshot ? (
+                      <img src={purchaseScreenshot} className="w-full h-full object-cover" alt="Screenshot" />
+                    ) : (
+                      <>
+                        <Plus className="w-8 h-8 text-muted-foreground" />
+                        <span className="text-xs font-bold text-muted-foreground">اضغط هنا لإدراج الصورة</span>
+                      </>
+                    )}
+                  </div>
+                  <input 
+                    id="screenshot-upload"
+                    type="file" 
+                    className="hidden" 
+                    accept="image/*" 
+                    onChange={handleScreenshotChange} 
+                  />
+                </div>
+
+                <Button 
+                  onClick={handleSendPurchaseRequest}
+                  disabled={!purchaseScreenshot || isSubmittingPurchase}
+                  className="w-full h-14 rounded-2xl bg-primary hover:bg-primary/90 text-white font-black text-lg gap-2 shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+                >
+                  {isSubmittingPurchase ? <Loader2 className="w-6 h-6 animate-spin" /> : <ShoppingBag className="w-6 h-6" />}
+                  {purchaseMethod === 'qi' ? 'طباعة طلب التفعيل' : 'إرسال طلب التفعيل'}
+                </Button>
+              </div>
+            ) : null}
+            
+            <Button 
+              variant="ghost" 
+              className="w-full h-12 rounded-2xl font-bold text-white/50 shrink-0"
+              onClick={() => {
+                if (purchaseMethod !== 'list') {
+                  setPurchaseMethod('list');
+                  setPurchaseScreenshot(null);
+                } else {
+                  setShowPurchaseDialog(false);
+                }
+              }}
+            >
+              إغلاق
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

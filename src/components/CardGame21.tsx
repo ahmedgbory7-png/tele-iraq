@@ -30,6 +30,7 @@ export function calculateScore(hand: string[]) {
   let score = 0;
   let aces = 0;
   for (const card of hand) {
+    if (!card) continue;
     const val = card.slice(1);
     if (val === 'A') {
       aces += 1;
@@ -361,7 +362,7 @@ const Card = ({ code }: { code: string }) => {
   }
 
   const suit = code[0];
-  const value = code.slice(1);
+  const value = code?.slice(1) || '';
   const isRed = suit === 'H' || suit === 'D';
 
   const getSuitIcon = () => {

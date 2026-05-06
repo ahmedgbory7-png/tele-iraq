@@ -20,12 +20,16 @@ interface AppState {
   quotaExceeded: boolean;
   chats: Chat[];
   appAlert: { id: string; message: string; type: 'info' | 'warning' | 'error' } | null;
+  showUserDashboard: boolean;
   fontSize: 'small' | 'medium' | 'large' | 'xlarge';
   autoDownloadMedia: boolean;
   lowDataMode: boolean;
   privateChatSound: string;
   groupChatSound: string;
   chatSounds: Record<string, string>;
+  
+  cachedStats: { total: number; banned: number; vip: number } | null;
+  lastStatsFetch: number;
 
   dataUsageStats: {
     messagesSent: number;
@@ -49,12 +53,14 @@ interface AppState {
   setQuotaExceeded: (exceeded: boolean) => void;
   setChats: (chats: Chat[]) => void;
   setAppAlert: (alert: { id: string; message: string; type: 'info' | 'warning' | 'error' } | null) => void;
+  setShowUserDashboard: (show: boolean) => void;
   setFontSize: (size: 'small' | 'medium' | 'large' | 'xlarge') => void;
   setAutoDownloadMedia: (enabled: boolean) => void;
   setLowDataMode: (enabled: boolean) => void;
   setPrivateChatSound: (sound: string) => void;
   setGroupChatSound: (sound: string) => void;
   setChatSound: (chatId: string, sound: string) => void;
+  setCachedStats: (stats: { total: number; banned: number; vip: number }) => void;
   updateDataStats: (stats: Partial<{ messagesSent: number; messagesReceived: number; mediaDownloaded: number; mediaUploaded: number }>) => void;
   resetDataStats: () => void;
   
@@ -78,12 +84,16 @@ export const useStore = create<AppState>((set) => ({
   quotaExceeded: false,
   chats: [],
   appAlert: null,
+  showUserDashboard: false,
   fontSize: (localStorage.getItem('app-fontSize') as any) || 'medium',
   autoDownloadMedia: localStorage.getItem('app-autoDownload') !== 'false',
   lowDataMode: localStorage.getItem('app-lowDataMode') === 'true',
   privateChatSound: localStorage.getItem('app-privateChatSound') || 'default',
   groupChatSound: localStorage.getItem('app-groupChatSound') || 'default',
   chatSounds: JSON.parse(localStorage.getItem('app-chatSounds') || '{}'),
+  
+  cachedStats: null,
+  lastStatsFetch: 0,
 
   dataUsageStats: JSON.parse(localStorage.getItem('app-data-stats') || '{"messagesSent": 0, "messagesReceived": 0, "mediaDownloaded": 0, "mediaUploaded": 0}'),
 
@@ -105,9 +115,22 @@ export const useStore = create<AppState>((set) => ({
   setNotification: (notification) => set({ notification }),
   setCurrentTab: (currentTab) => set({ currentTab }),
   setViewingProfileId: (viewingProfileId) => set({ viewingProfileId }),
-  setQuotaExceeded: (quotaExceeded) => set({ quotaExceeded }),
+  setQuotaExceeded: (quotaExceeded) => set((state) => {
+    if (quotaExceeded && !state.quotaExceeded) {
+      return { 
+        quotaExceeded: true,
+        appAlert: state.appAlert || { 
+          id: 'quota-error', 
+          message: 'تنبيه: تم استنفاد الحصة المجانية لهذا اليوم (Daily Quota Exceeded). سيتم إعادة ضبطها تلقائياً غداً.',
+          type: 'warning'
+        }
+      };
+    }
+    return { quotaExceeded };
+  }),
   setChats: (chats) => set({ chats }),
   setAppAlert: (appAlert) => set({ appAlert }),
+  setShowUserDashboard: (showUserDashboard) => set({ showUserDashboard }),
   setFontSize: (fontSize) => {
     localStorage.setItem('app-fontSize', fontSize);
     set({ fontSize });
@@ -133,6 +156,7 @@ export const useStore = create<AppState>((set) => ({
     localStorage.setItem('app-chatSounds', JSON.stringify(newChatSounds));
     return { chatSounds: newChatSounds };
   }),
+  setCachedStats: (cachedStats) => set({ cachedStats, lastStatsFetch: Date.now() }),
   updateDataStats: (newStats) => set((state) => {
     const updated = {
       messagesSent: state.dataUsageStats.messagesSent + (newStats.messagesSent || 0),
@@ -161,5 +185,6 @@ export const useStore = create<AppState>((set) => ({
     quotaExceeded: false,
     chats: [],
     appAlert: null,
+    showUserDashboard: false,
   }),
 }));

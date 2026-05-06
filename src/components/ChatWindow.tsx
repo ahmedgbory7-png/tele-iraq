@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/firebase';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc, arrayUnion, arrayRemove, deleteField, getDocs, writeBatch, increment } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, getDoc, limit, deleteDoc, arrayUnion, arrayRemove, deleteField, getDocs, writeBatch, increment, limitToLast } from 'firebase/firestore';
 import { Message, UserProfile, Chat } from '@/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, MoreVertical, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Map, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare, BadgeCheck, Plus, RotateCcw, Download, Coins, Dices, Star, Mic, Square, Camera, Phone, Video, Bell, Bot } from 'lucide-react';
+import { Send, MoreVertical, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Map, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare, BadgeCheck, Plus, RotateCcw, Download, Coins, Dices, Star, Mic, Square, Camera, Phone, Video, Bell, Bot, ShoppingBag } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
@@ -190,6 +190,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingStateRef = useRef<boolean>(false);
   const pendingReadIds = useRef<Set<string>>(new Set());
+  const clearingUnreadRef = useRef<boolean>(false);
+  const lastUnreadClearTimeRef = useRef<number>(0);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -271,7 +273,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
 
     const q = query(
       collection(db, 'chats', chatId, 'messages'),
-      orderBy('createdAt', 'asc')
+      orderBy('createdAt', 'asc'),
+      limitToLast(50)
     );
 
     const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
@@ -323,23 +326,29 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
       if (unreadIds.length > 0) {
         unreadIds.forEach(id => pendingReadIds.current.add(id));
         
-        // Wait 1s and commit
+        // Wait 15s and commit (increased from 3s to batch more)
         setTimeout(async () => {
-          if (unreadIds.length === 0) return;
+          if (unreadIds.length === 0 || document.visibilityState !== 'visible' || useStore.getState().quotaExceeded) {
+            unreadIds.forEach(id => pendingReadIds.current.delete(id));
+            return;
+          }
           const batch = writeBatch(db);
           unreadIds.forEach((id) => {
             batch.update(doc(db, 'chats', chatId, 'messages', id), { read: true });
           });
           try {
             await batch.commit();
-          } catch (err) {
+          } catch (err: any) {
             console.error("Error marking as read (batch):", err);
+            if (err.code === 'resource-exhausted') {
+              useStore.getState().setQuotaExceeded(true);
+            }
             // Don't remove from pending immediately to avoid hammering on quota error
             setTimeout(() => {
               unreadIds.forEach(id => pendingReadIds.current.delete(id));
-            }, 60000); // Wait 1 minute before allowing retry
+            }, 600000); // Wait 10 minutes before allowing retry
           }
-        }, 1000);
+        }, 15000);
       }
       
       setTimeout(() => {
@@ -383,19 +392,24 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         // Clear my unread count if it's > 0
         const myUnread = data.unreadCount?.[currentUser?.uid || ''] || 0;
         const myMentions = data.mentionsCount?.[currentUser?.uid || ''] || 0;
+        const now = Date.now();
         
-        if ((myUnread > 0 || myMentions > 0) && !useStore.getState().quotaExceeded) {
+        if ((myUnread > 0 || myMentions > 0) && !useStore.getState().quotaExceeded && !clearingUnreadRef.current && (now - lastUnreadClearTimeRef.current > 5000)) {
           const updates: any = {};
           if (myUnread > 0) updates[`unreadCount.${currentUser?.uid}`] = 0;
           if (myMentions > 0) updates[`mentionsCount.${currentUser?.uid}`] = 0;
           
           if (Object.keys(updates).length > 0) {
+            clearingUnreadRef.current = true;
+            lastUnreadClearTimeRef.current = now;
             updateDoc(doc(db, 'chats', chatId), updates).catch(err => {
               if (err.code === 'resource-exhausted' || err.message?.includes('quota')) {
                 useStore.getState().setQuotaExceeded(true);
               } else {
                 console.error("Error clearing counts:", err);
               }
+            }).finally(() => {
+              clearingUnreadRef.current = false;
             });
           }
         }
@@ -778,7 +792,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     typingTimeoutRef.current = setTimeout(() => {
       updateTypingStatus(false);
       typingTimeoutRef.current = null;
-    }, 3000);
+    }, 5000); // Increased from 3s
   };
 
   const cancelReplyOrEdit = () => {
@@ -1235,10 +1249,9 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             updatedAt: serverTimestamp()
           };
 
-          // Increment unread count for other participants
           chatData?.participants.forEach(uid => {
             if (uid !== currentUser.uid) {
-              chatUpdates[`unreadCount.${uid}`] = increment(1);
+              chatUpdates[`unreadCount.${uid}`] = (chatData.unreadCount?.[uid] || 0) + 1;
             }
           });
 
@@ -1253,7 +1266,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         console.error("Geolocation error:", error);
         alert('فشل الحصول على موقعك. تأكد من تفعيل الـ GPS.');
         setIsLocating(false);
-      }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
@@ -1705,8 +1719,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             </Avatar>
             <div className="flex flex-col">
               <span 
-                className={`font-bold text-sm flex items-center gap-1 ${(!chatData?.isGroup && isMagicColor(otherProfile?.nameColor)) ? getNameColorClass(otherProfile?.nameColor) : ''}`} 
-                style={{ color: (chatData?.isGroup ? '#8b5cf6' : (isMagicColor(otherProfile?.nameColor) ? undefined : (otherProfile?.nameColor || '#141414'))) }}
+                className={`font-bold text-sm flex items-center gap-1 ${(!chatData?.isGroup && isMagicColor(otherProfile?.specialColor || otherProfile?.nameColor, otherProfile?.specialColorExpiry)) ? getNameColorClass(otherProfile?.specialColor || otherProfile?.nameColor, otherProfile?.specialColorExpiry) : ''}`} 
+                style={{ color: (chatData?.isGroup ? '#8b5cf6' : (isMagicColor(otherProfile?.specialColor || otherProfile?.nameColor, otherProfile?.specialColorExpiry) ? undefined : (otherProfile?.nameColor || '#141414'))) }}
               >
                 {chatData?.isGroup ? chatData.groupName : (otherProfile?.displayName || 'مستخدم تلي عراق')}
                 {!chatData?.isGroup && otherProfile?.isVerified && (
@@ -2084,8 +2098,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                             </Avatar>
                             <div className="flex items-center gap-1 min-w-0">
                               <p 
-                                className={`text-[11px] font-bold truncate ${getNameColorClass(senderProfile?.nameColor)}`} 
-                                style={{ color: isMagicColor(senderProfile?.nameColor) ? undefined : (senderProfile?.nameColor || (isMe ? 'white' : '#8b5cf6')) }}
+                                className={`text-[11px] font-bold truncate ${getNameColorClass(senderProfile?.specialColor || senderProfile?.nameColor, senderProfile?.specialColorExpiry)}`} 
+                                style={{ color: isMagicColor(senderProfile?.specialColor || senderProfile?.nameColor, senderProfile?.specialColorExpiry) ? undefined : (senderProfile?.nameColor || (isMe ? 'white' : '#8b5cf6')) }}
                               >
                                 {senderProfile?.displayName}
                               </p>
@@ -2127,13 +2141,36 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         </div>
                       )}
 
+                      {msg.type === 'purchase_notice' && (
+                        <div className="bg-amber-500/10 border-2 border-dashed border-amber-500/30 rounded-2xl p-4 my-2 space-y-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-2xl bg-amber-500/20 flex items-center justify-center text-amber-500">
+                              <ShoppingBag className="w-5 h-5 shadow-sm" />
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-[10px] text-amber-500/70 font-black uppercase tracking-widest">طلب تفعيل ألوان سحرية</p>
+                              <p className="text-sm font-black text-foreground">معلومات الشراء والعميل</p>
+                            </div>
+                          </div>
+                          
+                          <div className={`whitespace-pre-wrap break-words leading-relaxed text-[13px] font-bold p-3 rounded-xl bg-white/5 border border-white/5 ${isMe ? 'text-white' : 'text-foreground'}`}>
+                            {msg.text}
+                          </div>
+                          
+                          <div className="flex items-center gap-2 px-1">
+                            <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                            <span className="text-[10px] font-black text-amber-500/80 uppercase">بانتظار المراجعة والتفعيل</span>
+                          </div>
+                        </div>
+                      )}
+
                       {msg.type === 'text' && msg.text && (
                         <div className={`whitespace-pre-wrap break-words leading-relaxed text-[15px] mb-1 ${isMe ? 'text-white' : 'text-foreground'}`}>
                           {msg.text}
                         </div>
                       )}
                       
-                      {msg.type !== 'text' && msg.text && (
+                      {msg.type !== 'text' && msg.type !== 'purchase_notice' && msg.text && (
                         <div className={`whitespace-pre-wrap break-words leading-relaxed text-[13px] mb-2 opacity-80 ${isMe ? 'text-white' : 'text-foreground'}`}>
                           {msg.text}
                         </div>
@@ -2711,36 +2748,42 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                 </Button>
               </div>
             ) : isVideoMessageRecording ? (
-              <div className="bg-muted/80 backdrop-blur-sm rounded-2xl h-11 flex items-center px-4 gap-3 animate-in slide-in-from-bottom-2" dir="rtl">
-                 <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                    <span className="text-sm font-mono font-bold text-red-500">
-                      {formatRecordingTime(recordingTime)}
-                    </span>
+              <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="relative w-64 h-64 sm:w-80 sm:h-80 rounded-full overflow-hidden border-4 border-primary shadow-[0_0_50px_rgba(139,92,246,0.3)] bg-black">
+                  <video 
+                    autoPlay 
+                    playsInline 
+                    muted 
+                    className="w-full h-full object-cover scale-x-[-1]" 
+                    ref={(el) => { if (el && videoStreamRef.current) el.srcObject = videoStreamRef.current; }} 
+                  />
+                  <div className="absolute top-4 left-0 right-0 flex justify-center">
+                    <div className="bg-red-500 text-white text-[10px] px-3 py-1 rounded-full font-black animate-pulse flex items-center gap-2">
+                       <div className="w-2 h-2 bg-white rounded-full animate-ping" />
+                       REC {formatRecordingTime(recordingTime)}
+                    </div>
                   </div>
-                  <div className="flex-1 text-center text-xs text-muted-foreground mr-2">جاري تسجيل فيديو...</div>
-                  <Button 
-                    type="button" 
-                    variant="ghost" 
-                    size="sm" 
-                    className="h-8 rounded-xl text-destructive hover:bg-destructive/10 px-2 text-xs font-bold gap-1"
-                    onClick={() => {
+                  <div className="absolute bottom-6 left-0 right-0 flex justify-center gap-4">
+                    <Button 
+                      type="button" 
+                      variant="ghost" 
+                      className="rounded-full bg-white/10 text-white hover:bg-white/20 h-10 px-4 font-bold"
+                      onClick={() => {
                         stopVideoMessageRecording();
                         setVideoPreviewUrl(null);
-                    }}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    إلغاء
-                  </Button>
-                  <Button 
-                    type="button"
-                    size="sm" 
-                   className="h-8 rounded-xl bg-primary text-white hover:bg-primary/90 px-3 text-xs font-bold gap-1"
-                    onClick={stopVideoMessageRecording}
-                  >
-                    <Square className="w-2 h-2 fill-current" />
-                    إيقاف
-                  </Button>
+                      }}
+                    >
+                      إلغاء
+                    </Button>
+                    <Button 
+                      type="button"
+                      className="rounded-full bg-primary text-white hover:bg-primary/90 h-10 px-6 font-bold gap-2"
+                      onClick={() => stopVideoMessageRecording(true)}
+                    >
+                       إيقاف وإرسال
+                    </Button>
+                  </div>
+                </div>
               </div>
             ) : (
               <>

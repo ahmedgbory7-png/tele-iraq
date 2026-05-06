@@ -6,7 +6,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer, onSnapshot, collection, query, where, getDocs, addDoc, limit, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer, onSnapshot, collection, query, where, getDocs, addDoc, limit, updateDoc, orderBy } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Auth } from '@/components/Auth';
 import { ChatList } from '@/components/ChatList';
@@ -14,6 +14,7 @@ import { ContactList } from '@/components/ContactList';
 import { ChatWindow } from '@/components/ChatWindow';
 import { Profile } from '@/components/Profile';
 import { Settings } from '@/components/Settings';
+import { UserManagementDashboard } from '@/components/UserManagementDashboard';
 import { SystemAlert } from '@/components/SystemAlert';
 import { UserProfile, Chat } from '@/types';
 import { Language, translations } from '@/lib/i18n';
@@ -43,6 +44,7 @@ export default function App() {
     viewingProfileId, setViewingProfileId,
     lastChatId,
     quotaExceeded, setQuotaExceeded,
+    showUserDashboard, setShowUserDashboard,
     chats, setChats,
     fontSize
   } = useStore();
@@ -83,6 +85,8 @@ export default function App() {
     }
 
     // Global Call Listener
+    if (useStore.getState().quotaExceeded) return;
+
     const callsQ = query(
       collection(db, 'calls'),
       where('receiverId', '==', user.uid),
@@ -119,11 +123,19 @@ export default function App() {
     
     const q = query(
       collection(db, 'chats'),
-      where('participants', 'array-contains', user.uid)
+      where('participants', 'array-contains', user.uid),
+      orderBy('updatedAt', 'desc'),
+      limit(30)
     );
 
+    if (useStore.getState().quotaExceeded) {
+      // Don't start more listeners if already erroring
+      return;
+    }
+
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      // 1. Update Global Chats and Unread Count
+      if (useStore.getState().quotaExceeded) return;
+      
       const newChats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat));
       
       // Sort manually to match what UI expects
@@ -329,10 +341,10 @@ export default function App() {
             if (snapshot.exists()) {
               const data = snapshot.data() as UserProfile;
               
-              // Handle ban
-              if (data.isBanned) {
+              // Handle ban or deletion
+              if (data.isBanned || data.isDeleted) {
                 auth.signOut();
-                setConfigError('تم حظر هذا الحساب من قبل الإدارة.');
+                setConfigError(data.isBanned ? 'تم حظر هذا الحساب من قبل الإدارة.' : 'هذا الحساب تم حذفه.');
                 return;
               }
 
@@ -415,7 +427,7 @@ export default function App() {
     if (!user) return;
     
     let lastPresenceUpdate = 0;
-    const PRESENCE_COOLDOWN = 180000; // 3 minutes cooldown
+    const PRESENCE_COOLDOWN = 900000; // 15 minutes cooldown
 
     // Heartbeat for "Last Seen"
     const updatePresence = async () => {
@@ -441,7 +453,7 @@ export default function App() {
     };
 
     updatePresence();
-    const interval = setInterval(updatePresence, 300000); // 5 minutes
+    const interval = setInterval(updatePresence, 900000); // 15 minutes
     
     document.addEventListener('visibilitychange', updatePresence);
     return () => {
@@ -498,7 +510,7 @@ export default function App() {
       case 'chats':
         return <ChatList />;
       case 'contacts':
-        return <ContactList />;
+        return <ContactList onClose={() => setCurrentTab('chats')} />;
       case 'profile':
         return <Profile />;
       case 'settings':
@@ -629,7 +641,7 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {quotaExceeded && (
+        {quotaExceeded && !showUserDashboard && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -706,6 +718,21 @@ export default function App() {
 
       {/* Global Call UI */}
       <SystemAlert />
+      {/* User Management Dashboard Overlay */}
+      <AnimatePresence>
+        {showUserDashboard && (
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="fixed inset-0 z-[1100]"
+          >
+            <UserManagementDashboard onClose={() => setShowUserDashboard(false)} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {notification && (
           <motion.div 

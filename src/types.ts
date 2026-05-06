@@ -25,8 +25,12 @@ export interface UserProfile {
   isVerified?: boolean;
   isDeveloper?: boolean;
   isBanned?: boolean;
-  forceLogoutSignal?: number;
+  isDeleted?: boolean;
+  deletedAt?: any;
+  createdAt?: any;
   specialColor?: string;
+  specialColorExpiry?: any;
+  forceLogoutSignal?: number;
   verifiedAt?: any;
   sessionVersion?: number;
   friends?: string[];
@@ -35,6 +39,8 @@ export interface UserProfile {
     photoURL?: string;
     nameColor?: string;
     isVerified?: boolean;
+    specialColor?: string;
+    specialColorExpiry?: any;
     phoneNumber?: string;
   } };
 }
@@ -67,6 +73,8 @@ export interface Chat {
     photoURL?: string;
     nameColor?: string;
     isVerified?: boolean;
+    specialColor?: string;
+    specialColorExpiry?: any;
     phoneNumber?: string;
   } };
   unreadCount?: { [userId: string]: number };
