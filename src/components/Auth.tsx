@@ -10,6 +10,7 @@ import {
   updateProfile
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { motion, AnimatePresence } from 'motion/react';
 
 import { IraqLogo } from '@/components/IraqLogo';
 
@@ -50,9 +51,21 @@ export function Auth() {
       if (normalizedId === 'isofiq') {
         authEmail = 'isofiq@teleiraq.app';
       } else {
-        // Allow ONLY alphanumeric and . _ - for clean username
-        const cleanName = trimmedEmail.replace(/[^a-zA-Z0-9._\-]/g, '').toLowerCase();
-        if (!cleanName) return setError('اسم المستخدم غير صالح');
+        // Support Arabic and other characters by generating a safe email prefix
+        // We clean it but if it becomes empty we use a hex representation of the string
+        let cleanName = trimmedEmail.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        
+        if (!cleanName) {
+          // If the username is purely Arabic or symbol-heavy, generate a deterministic hash/id
+          // This allows users to "Sign In" with their Arabic nickname as an ID
+          let hash = 0;
+          for (let i = 0; i < trimmedEmail.length; i++) {
+            hash = ((hash << 5) - hash) + trimmedEmail.charCodeAt(i);
+            hash = hash & hash; // Convert to 32bit int
+          }
+          cleanName = 'user_' + Math.abs(hash).toString(36);
+        }
+        
         authEmail = `${cleanName}@teleiraq.app`;
       }
     }
@@ -62,9 +75,11 @@ export function Auth() {
         try {
           await signInWithEmailAndPassword(auth, authEmail, password);
         } catch (signInErr: any) {
-          // If developer account not found, suggest registration
-          if ((signInErr.code === 'auth/user-not-found' || signInErr.code === 'auth/invalid-credential') && normalizedId === 'isofiq') {
-            setError('حساب المطور غير موجود أو البيانات غير صحيحة. يرجى "إنشاء حساب" أولاً بنفس هذه البيانات.');
+          console.log('SignIn error:', signInErr.code);
+          // If user not found, help them out
+          if (signInErr.code === 'auth/user-not-found' || signInErr.code === 'auth/invalid-credential') {
+            // Check if this is a registration attempt on the login page
+            setError('هذا الحساب غير موجود. هل تقصد "إنشاء حساب" جديد؟');
             return;
           }
           throw signInErr;
@@ -76,10 +91,10 @@ export function Auth() {
         await updateProfile(user, { displayName });
         
         // Create initial profile with normalized data
-        await setDoc(doc(db, 'users', user.uid), {
+        const initialProfile: any = {
           uid: user.uid,
           email: user.email,
-          username: isEmail ? null : trimmedEmail.replace(/[^a-zA-Z0-9]/g, '').toLowerCase(),
+          username: isEmail ? null : (trimmedEmail.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || authEmail.split('@')[0]),
           displayName: displayName,
           status: 'أنا أستخدم تلي عراق!',
           lastSeen: serverTimestamp(),
@@ -88,23 +103,31 @@ export function Auth() {
           reels: [],
           friends: [],
           blockedUsers: [],
-          isDeveloper: user.email?.toLowerCase() === 'isofiq@teleiraq.app',
-          isVerified: user.email?.toLowerCase() === 'isofiq@teleiraq.app',
           sessionVersion: 1
-        });
+        };
+
+        // Only add developer/verified flags if the email matches - otherwise Firestore rules will reject the 'create'
+        if (user.email?.toLowerCase() === 'isofiq@teleiraq.app' || user.email?.toLowerCase() === 'ahmedgbory7@gmail.com') {
+          initialProfile.isDeveloper = true;
+          initialProfile.isVerified = true;
+        }
+
+        await setDoc(doc(db, 'users', user.uid), initialProfile);
       }
     } catch (err: any) {
       console.error('Auth error details:', err.code, err.message);
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        setError('خطأ في اسم المستخدم أو كلمة المرور. تأكد من البيانات المدخلة.');
+        setError('بيانات الدخول غير صحيحة. يرجى التأكد من اسم المستخدم وكلمة المرور.');
       } else if (err.code === 'auth/email-already-in-use') {
-        setError('اسم المستخدم هذا مستخدم مسبقاً، يرجى اختيار اسم آخر.');
+        setError('اسم المستخدم هذا محجوز بالفعل. يرجى اختيار اسم آخر.');
       } else if (err.code === 'auth/weak-password') {
-        setError('كلمة المرور ضعيفة جداً، يرجى اختيار 6 أحرف أو أكثر.');
+        setError('كلمة المرور ضعيفة جداً. استخدم 6 خانات أو أكثر.');
       } else if (err.code === 'auth/invalid-email') {
-        setError('الاسم أو البريد غير صالح. استخدم أحرف إنجليزية وأرقام فقط.');
+        setError('البريد أو الاسم المدخل غير صالح.');
+      } else if (err.code === 'auth/network-request-failed') {
+        setError('مشكلة في الاتصال بالإنترنت. يرجى المحاولة لاحقاً.');
       } else {
-        setError('حدث خطأ غير متوقع. يرجى المحاولة لاحقاً.');
+        setError('عذراً، حدث خطأ ما أثناء العملية. حاول مجدداً.');
       }
     } finally {
       setLoading(false);
@@ -112,69 +135,87 @@ export function Auth() {
   };
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center bg-background telegram-bg" dir="rtl">
+    <div className="h-screen w-screen flex items-center justify-center bg-background telegram-bg px-4" dir="rtl">
       <div id="recaptcha-container"></div>
       
-      <Card className="w-full max-w-md border-none shadow-2xl overflow-hidden">
-        <CardHeader className="text-center space-y-4">
-          <div className="mx-auto">
-            <IraqLogo className="w-20 h-20" />
-          </div>
+      <Card className="w-full max-w-md border-none shadow-2xl overflow-hidden glass-morphism rounded-[2.5rem]">
+        <CardHeader className="text-center space-y-4 pt-10">
+          <motion.div 
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="mx-auto"
+          >
+            <IraqLogo className="w-24 h-24 drop-shadow-2xl" />
+          </motion.div>
           <div className="space-y-2">
             <CardTitle className="text-4xl font-black tracking-tight magic-iraq-text pb-1">تلي عراق</CardTitle>
-            <CardDescription className="text-base font-medium">
+            <CardDescription className="text-base font-bold text-muted-foreground/80">
               {isLogin ? 'تسجيل الدخول إلى حسابك' : 'إنشاء حساب جديد في تلي عراق'}
             </CardDescription>
           </div>
         </CardHeader>
-        <CardContent className="space-y-6">
-          {error && (
-            <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg border border-destructive/20 text-right animate-shake">
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleEmailAuth} className="space-y-4">
-            {!isLogin && (
-              <div className="space-y-2">
-                <label className="text-sm font-bold px-1">اسم المستخدم الكامل</label>
-                <div className="relative">
-                  <MessageSquare className="absolute right-3 top-3 h-5 w-5 text-muted-foreground" />
-                  <Input
-                    placeholder="مثال: أحمد العراقي"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    className="pr-10 h-12 bg-muted/50 border-none rounded-xl focus-visible:ring-primary/30"
-                  />
-                </div>
-              </div>
+        <CardContent className="space-y-6 pb-12 px-8">
+          <AnimatePresence mode="wait">
+            {error && (
+              <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="bg-destructive/10 text-destructive text-sm p-4 rounded-2xl border border-destructive/20 text-right font-bold"
+              >
+                {error}
+              </motion.div>
             )}
+          </AnimatePresence>
+
+          <form onSubmit={handleEmailAuth} className="space-y-5">
+            <AnimatePresence mode="popLayout">
+              {!isLogin && (
+                <motion.div 
+                  initial={{ x: 50, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: -50, opacity: 0 }}
+                  className="space-y-2"
+                >
+                  <label className="text-xs font-black uppercase tracking-wider text-muted-foreground/70 px-2">الاسم الذي سيظهر للآخرين</label>
+                  <div className="relative group">
+                    <UserPlus className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground transition-colors group-focus-within:text-primary" />
+                    <Input
+                      placeholder="مثال: أحمد العراقي"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      className="pr-12 h-14 bg-muted/30 border-2 border-transparent focus:border-primary/20 rounded-2xl font-bold transition-all"
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className="space-y-2">
-              <label className="text-sm font-bold px-1">اسم المستخدم أو البريد</label>
-              <div className="relative">
-                <Mail className="absolute right-3 top-3 h-5 w-5 text-muted-foreground" />
+              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground/70 px-2">اسم المستخدم أو المعرف</label>
+              <div className="relative group">
+                <Mail className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground transition-colors group-focus-within:text-primary" />
                 <Input
                   type="text"
                   placeholder="Username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="pr-10 h-12 bg-muted/50 border-none rounded-xl focus-visible:ring-primary/30 text-left"
+                  className="pr-12 h-14 bg-muted/30 border-2 border-transparent focus:border-primary/20 rounded-2xl font-bold transition-all text-left"
                   dir="ltr"
                 />
               </div>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-bold px-1">كلمة المرور</label>
-              <div className="relative">
-                <Lock className="absolute right-3 top-3 h-5 w-5 text-muted-foreground" />
+              <label className="text-xs font-black uppercase tracking-wider text-muted-foreground/70 px-2">كلمة المرور</label>
+              <div className="relative group">
+                <Lock className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground transition-colors group-focus-within:text-primary" />
                 <Input
                   type="password"
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pr-10 h-12 bg-muted/50 border-none rounded-xl focus-visible:ring-primary/30 text-left"
+                  className="pr-12 h-14 bg-muted/30 border-2 border-transparent focus:border-primary/20 rounded-2xl font-bold transition-all text-left"
                   dir="ltr"
                 />
               </div>
@@ -182,27 +223,38 @@ export function Auth() {
 
             <Button 
               type="submit"
-              className="w-full h-12 text-lg font-semibold purple-gradient hover:opacity-90 transition-all rounded-xl shadow-lg active:scale-[0.98]"
+              className="w-full h-14 text-lg font-black purple-gradient hover:opacity-90 transition-all rounded-2xl shadow-xl active:scale-[0.98] mt-4"
               disabled={loading}
             >
-              {loading ? <Loader2 className="animate-spin ml-2 h-5 w-5" /> : (isLogin ? <LogIn className="ml-2 h-5 w-5" /> : <UserPlus className="ml-2 h-5 w-5" />)}
-              {isLogin ? 'تسجيل الدخول' : 'بدء الاستخدام'}
+              {loading ? <Loader2 className="animate-spin ml-2 h-6 w-6" /> : (isLogin ? <LogIn className="ml-2 h-6 w-6" /> : <UserPlus className="ml-2 h-6 w-6" />)}
+              {isLogin ? 'دخول آمن' : 'إنشاء الحساب الآن'}
             </Button>
 
-            <div className="flex justify-center text-sm">
+            <div className="pt-2">
               <button 
                 type="button"
-                onClick={() => setIsLogin(!isLogin)}
-                className="text-primary hover:underline font-bold"
+                onClick={() => {
+                  setIsLogin(!isLogin);
+                  setError('');
+                }}
+                className="w-full py-3 text-sm font-black text-primary hover:text-primary/80 transition-colors"
               >
-                {isLogin ? 'ليس لديك حساب؟ سجل الآن' : 'لديك حساب بالفعل؟ سجل دخولك'}
+                {isLogin ? (
+                  <span className="flex items-center justify-center gap-2">
+                    ليس لديك حساب؟ <span className="underline decoration-2 underline-offset-4">سجل مجاناً</span>
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-2">
+                    لديك حساب بالفعل؟ <span className="underline decoration-2 underline-offset-4">قم بتسجيل الدخول</span>
+                  </span>
+                )}
               </button>
             </div>
           </form>
           
-          <p className="text-xs text-center text-muted-foreground px-6">
-            بواسطة المطور: أبو وطن
-          </p>
+          <div className="text-[10px] text-center text-muted-foreground/50 font-bold uppercase tracking-[0.2em] pt-4">
+            نظام تلي عراق المطور • {new Date().getFullYear()}
+          </div>
         </CardContent>
       </Card>
     </div>

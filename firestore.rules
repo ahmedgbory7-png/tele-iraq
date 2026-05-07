@@ -179,8 +179,10 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && 
-                    !incoming().keys().hasAny(['isDeveloper', 'isBanned', 'forceLogoutSignal', 'specialColor', 'isVerified']);
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && (
+        !incoming().keys().hasAny(['isDeveloper', 'isBanned', 'forceLogoutSignal', 'specialColor', 'isVerified']) ||
+        isDeveloper()
+      );
       allow update: if isValidId(userId) && (isOwner(userId) || isDeveloper()) && isValidUser(incoming()) && (
         isDeveloper() || (
           isOwner(userId) &&
