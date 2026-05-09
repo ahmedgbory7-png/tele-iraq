@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, MoreVertical, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Map, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare, BadgeCheck, Plus, RotateCcw, Download, Coins, Dices, Star, Mic, Square, Camera, Phone, Video, Bell, Bot, ShoppingBag } from 'lucide-react';
+import { Send, MoreVertical, Smile, ArrowRight, ArrowLeft, X, Image as ImageIcon, FileText, Loader2, Check, CheckCheck, MapPin, Map, Trash2, Gamepad2, ShieldAlert, UserPlus, LogOut, ShieldCheck, UserMinus, User, Unlock, Lock, Trophy, MessageSquare, BadgeCheck, Plus, RotateCcw, Download, Coins, Dices, Star, Mic, Square, Camera, Phone, Video, Bell, Bot, ShoppingBag, Maximize2, Minimize2 } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
@@ -21,7 +21,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useStore } from '@/store/useStore';
 import { translations } from '@/lib/i18n';
 import { getNameColorClass, isMagicColor } from '@/lib/utils';
-import { GifPicker } from './GifPicker';
 import { VoicePlayer } from './VoicePlayer';
 import { CameraModal } from './CameraModal';
 import CallSystem from './CallSystem';
@@ -121,7 +120,7 @@ const ChessGameSync = ({ gameId, currentUser }: { gameId: string, currentUser: a
 };
 
 export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () => void }) {
-  const { profile: currentUser, setViewingProfileId, setShowProfile, language, autoDownloadMedia, lowDataMode, updateDataStats } = useStore();
+  const { profile: currentUser, setViewingProfileId, setShowProfile, language, autoDownloadMedia, lowDataMode, updateDataStats, activeRealCall, setActiveRealCall, isFocusMode, setIsFocusMode } = useStore();
   const t = translations[language];
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -164,10 +163,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
   const [showGameCenter, setShowGameCenter] = useState(false);
   const [showChatInfo, setShowChatInfo] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [showGifPicker, setShowGifPicker] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [recordingMode, setRecordingMode] = useState<'voice' | 'video'>('voice');
-  const [activeRealCall, setActiveRealCall] = useState<{ type: 'voice' | 'video'; isCaller: boolean; callId: string } | null>(null);
   const [incomingCallData, setIncomingCallData] = useState<any>(null);
   const [activeCall, setActiveCall] = useState<{ type: 'voice' | 'video'; status: 'calling' | 'active' | 'ended' } | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -751,35 +748,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     setActiveRealCall({ type, isCaller: true, callId: '' });
   };
 
-  const handleGifSelect = async (gif: any, type: 'image' | 'sticker' = 'image') => {
-    if (!currentUser || !chatData || useStore.getState().quotaExceeded) return;
-    setShowGifPicker(false);
-
-    const msgData = {
-      chatId,
-      senderId: currentUser.uid,
-      type: type,
-      fileUrl: gif.images.fixed_height.url,
-      text: type === 'sticker' ? 'ملصق' : 'GIF',
-      createdAt: serverTimestamp()
-    };
-
-    try {
-      await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
-      await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: {
-          text: '🎬 GIF',
-          senderId: currentUser.uid,
-          createdAt: serverTimestamp()
-        },
-        updatedAt: serverTimestamp()
-      });
-    } catch (err: any) {
-      if (err.code === 'resource-exhausted') useStore.getState().setQuotaExceeded(true);
-      console.error("Error sending GIF:", err);
-    }
-  };
-
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setNewMessage(e.target.value);
 
@@ -1360,7 +1328,46 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     }
   };
 
-  const onEmojiClick = (emojiData: any) => {
+  useEffect(() => {
+    if (!(import.meta as any).env.VITE_GIPHY_API_KEY) {
+      console.warn("Giphy API Key is missing. GIF search in the emoji picker may not work.");
+    }
+  }, []);
+
+  const onEmojiClick = async (emojiData: any) => {
+    // Check if it's a Giphy GIF (emoji-picker-react uses specific format for GIFs)
+    const gifUrl = emojiData.imageUrl || emojiData.gifUrl || emojiData.previewUrl;
+    if (gifUrl && !emojiData.emoji) {
+      if (!currentUser || !chatData || useStore.getState().quotaExceeded) return;
+      
+      const stickerData = {
+        chatId: chatData.id,
+        senderId: currentUser.uid,
+        type: 'sticker',
+        fileUrl: gifUrl,
+        createdAt: serverTimestamp()
+      };
+
+      try {
+        await addDoc(collection(db, 'chats', chatData.id, 'messages'), stickerData);
+        updateDataStats({ messagesSent: 1 });
+        
+        await updateDoc(doc(db, 'chats', chatData.id), {
+          lastMessage: {
+            text: 'sticker 🖼️',
+            senderId: currentUser.uid,
+            createdAt: serverTimestamp()
+          },
+          updatedAt: serverTimestamp()
+        });
+        
+        setShowEmojiPicker(false);
+      } catch (err: any) {
+        console.error("Error sending gif:", err);
+      }
+      return;
+    }
+
     setNewMessage(prev => prev + emojiData.emoji);
   };
 
@@ -1723,6 +1730,15 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                 style={{ color: (chatData?.isGroup ? '#8b5cf6' : (isMagicColor(otherProfile?.specialColor || otherProfile?.nameColor, otherProfile?.specialColorExpiry) ? undefined : (otherProfile?.nameColor || '#141414'))) }}
               >
                 {chatData?.isGroup ? chatData.groupName : (otherProfile?.displayName || 'مستخدم تلي عراق')}
+                {isFocusMode && (
+                  <motion.div 
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="flex items-center bg-primary text-white text-[7px] px-1 rounded-sm leading-none h-3 mr-1"
+                  >
+                    FOCUS
+                  </motion.div>
+                )}
                 {!chatData?.isGroup && otherProfile?.isVerified && (
                   <BadgeCheck className="w-4 h-4 text-blue-500 fill-blue-500/20 shrink-0" />
                 )}
@@ -1803,6 +1819,14 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                       </Button>
                       <Button 
                         variant="ghost" 
+                        className={`w-full justify-start text-xs rounded-xl h-10 gap-2 ${isFocusMode ? 'text-primary bg-primary/5' : ''}`}
+                        onClick={() => { setIsFocusMode(!isFocusMode); setShowMoreMenu(false); }}
+                      >
+                        {isFocusMode ? <Minimize2 className="w-4 h-4 text-primary" /> : <Maximize2 className="w-4 h-4 text-primary" />}
+                        {isFocusMode ? 'إيقاف وضع التركيز' : 'تفعيل وضع التركيز'}
+                      </Button>
+                      <Button 
+                        variant="ghost" 
                         className="w-full justify-start text-xs text-destructive rounded-xl h-10 gap-2 hover:bg-destructive/10"
                         onClick={leaveGroup}
                       >
@@ -1829,6 +1853,14 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                       >
                         <User className="w-4 h-4 text-primary" />
                         مشاهدة الملف الشخصي
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        className={`w-full justify-start text-xs rounded-xl h-10 gap-2 ${isFocusMode ? 'text-primary bg-primary/5' : ''}`}
+                        onClick={() => { setIsFocusMode(!isFocusMode); setShowMoreMenu(false); }}
+                      >
+                        {isFocusMode ? <Minimize2 className="w-4 h-4 text-primary" /> : <Maximize2 className="w-4 h-4 text-primary" />}
+                        {isFocusMode ? 'إيقاف وضع التركيز' : 'تفعيل وضع التركيز'}
                       </Button>
                       <Button 
                         variant="ghost" 
@@ -2067,11 +2099,13 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                             onPointerUp={handlePressEnd}
                             onPointerLeave={handlePressEnd}
                             className={`${msg.type === 'sticker' || msg.type === 'system' ? 'hidden' : 'px-3 py-2 rounded-2xl shadow-sm relative group cursor-pointer transition-all active:scale-[0.98]'} ${
-                              isMe 
-                                ? 'bg-primary text-white' 
-                                : msg.senderId === 'teleiraq-system'
-                                  ? 'bg-primary/10 border border-primary/20 text-foreground'
-                                  : 'bg-card text-foreground'
+                              msg.type === 'purchase_notice'
+                                ? 'bg-amber-500/5 border border-amber-500/20'
+                                : isMe 
+                                  ? 'bg-primary text-white' 
+                                  : msg.senderId === 'teleiraq-system'
+                                    ? 'bg-primary/10 border border-primary/20 text-foreground'
+                                    : 'bg-card text-foreground'
                             } ${isFirstInGroup ? (isMe ? 'rounded-tr-2xl' : 'rounded-tl-2xl') : (isMe ? 'rounded-tr-lg' : 'rounded-tl-lg')} ${isLastInGroup ? (isMe ? 'rounded-br-none' : 'rounded-bl-none') : (isMe ? 'rounded-br-lg' : 'rounded-bl-lg')}`}
                           >
                         {/* Support Indicator */}
@@ -2564,12 +2598,13 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         {showEmojiPicker && (
           <div className="absolute bottom-20 left-4 z-50 shadow-2xl rounded-2xl overflow-hidden border" ref={emojiPickerRef}>
             <EmojiPicker 
-              onEmojiClick={onEmojiClick} 
+              onEmojiClick={onEmojiClick as any} 
               autoFocusSearch={false} 
               theme={Theme.LIGHT}
               width={300}
               height={400}
               searchPlaceholder="بحث عن ايموجي..."
+              {...({ giphyApiKey: (import.meta as any).env.VITE_GIPHY_API_KEY } as any)}
             />
           </div>
         )}
@@ -2582,14 +2617,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
             }, 300);
           }}
         >
-          {showGifPicker && (
-            <div className="absolute bottom-20 left-4 z-50">
-              <GifPicker 
-                onSelect={handleGifSelect} 
-                onClose={() => setShowGifPicker(false)} 
-              />
-            </div>
-          )}
           <AnimatePresence>
             {showCamera && (
               <CameraModal 
@@ -2792,7 +2819,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                   placeholder="اكتب رسالة..."
                   value={newMessage}
                   onChange={handleInputChange}
-                  className="bg-muted/50 border-none rounded-2xl h-11 pr-10 pl-20 focus-visible:ring-primary/30"
+                  className="bg-muted/50 border-none rounded-2xl h-11 pr-10 pl-12 focus-visible:ring-primary/30"
                 />
                 <Button 
                   type="button" 
@@ -2802,15 +2829,6 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                   onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                 >
                   <Smile className="h-5 w-5" />
-                </Button>
-                <Button 
-                  type="button" 
-                  variant="ghost" 
-                  size="icon" 
-                  className={`absolute left-10 top-1 rounded-full h-9 w-9 transition-colors ios-touch ${showGifPicker ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
-                  onClick={() => setShowGifPicker(!showGifPicker)}
-                >
-                  <div className="text-[10px] font-bold border-2 border-muted-foreground rounded px-0.5 leading-none">GIF</div>
                 </Button>
               </>
             )}

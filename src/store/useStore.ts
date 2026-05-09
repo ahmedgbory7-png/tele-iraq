@@ -28,6 +28,12 @@ interface AppState {
   groupChatSound: string;
   chatSounds: Record<string, string>;
   
+  isFocusMode: boolean;
+  setIsFocusMode: (enabled: boolean) => void;
+  
+  activeRealCall: { type: 'voice' | 'video'; isCaller: boolean; callId: string } | null;
+  setActiveRealCall: (call: { type: 'voice' | 'video'; isCaller: boolean; callId: string } | null) => void;
+  
   cachedStats: { total: number; banned: number; vip: number } | null;
   lastStatsFetch: number;
 
@@ -91,6 +97,14 @@ export const useStore = create<AppState>((set) => ({
   privateChatSound: localStorage.getItem('app-privateChatSound') || 'default',
   groupChatSound: localStorage.getItem('app-groupChatSound') || 'default',
   chatSounds: JSON.parse(localStorage.getItem('app-chatSounds') || '{}'),
+  isFocusMode: localStorage.getItem('app-focusMode') === 'true',
+  setIsFocusMode: (isFocusMode) => {
+    localStorage.setItem('app-focusMode', isFocusMode.toString());
+    set({ isFocusMode });
+  },
+  
+  activeRealCall: null,
+  setActiveRealCall: (activeRealCall) => set({ activeRealCall }),
   
   cachedStats: null,
   lastStatsFetch: 0,
@@ -186,5 +200,6 @@ export const useStore = create<AppState>((set) => ({
     chats: [],
     appAlert: null,
     showUserDashboard: false,
+    isFocusMode: false,
   }),
 }));

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '@/firebase';
-import { doc, updateDoc, getDoc, query, collection, where, getDocs, addDoc, serverTimestamp, orderBy, onSnapshot, deleteDoc, increment, writeBatch, arrayUnion, arrayRemove, deleteField, limit } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, query, collection, where, getDocs, addDoc, setDoc, serverTimestamp, orderBy, onSnapshot, deleteDoc, increment, writeBatch, arrayUnion, arrayRemove, deleteField, limit, Timestamp } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -24,10 +24,20 @@ export function Profile() {
   const [confirmingContact, setConfirmingContact] = useState<{ type: 'add' | 'remove' } | null>(null);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [showPurchaseDialog, setShowPurchaseDialog] = useState(false);
-  const [purchaseMethod, setPurchaseMethod] = useState<'list' | 'zain' | 'qi'>('list');
+  const [purchaseMethod, setPurchaseMethod] = useState<'list' | 'plan' | 'methods' | 'zain' | 'qi' | 'asia'>('list');
   const [selectedColorToBuy, setSelectedColorToBuy] = useState<string | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [purchaseScreenshot, setPurchaseScreenshot] = useState<string | null>(null);
   const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
+  const [showMyColorsDialog, setShowMyColorsDialog] = useState(false);
+  const [isChangingColor, setIsChangingColor] = useState(false);
+
+  const PLANS = [
+    { id: '1m', name: 'شهر واحد', price: '$5', duration: '30 يوم' },
+    { id: '3m', name: 'ثلاثة أشهر', price: '$10', duration: '90 يوم' },
+    { id: '6m', name: 'ستة أشهر', price: '$20', duration: '180 يوم' },
+    { id: '1y', name: 'سنة كاملة', price: '$40', duration: '365 يوم' },
+  ];
 
   const MAGIC_COLORS_FOR_PURCHASE = [
     { name: 'لون كربوني 🖤', value: 'animated-carbon', class: 'bg-zinc-800' },
@@ -78,20 +88,11 @@ export function Profile() {
 
     setIsSubmittingPurchase(true);
     try {
-      // 1. Find ISOFIQ's UID
-      const usersRef = collection(db, 'users');
-      const qUser = query(usersRef, where('email', '==', 'isofiq@teleiraq.app'), limit(1));
-      const userSnap = await getDocs(qUser);
+      if (!profile?.uid) return;
       
-      if (userSnap.empty) {
-        throw new Error("ISOFIQ account not found");
-      }
+      const supportUid = 'teleiraq-system';
       
-      const isofiqUser = userSnap.docs[0];
-      const isofiqUid = isofiqUser.id;
-      const isofiqData = isofiqUser.data();
-      
-      // 2. Find or create chat with ISOFIQ
+      // 2. Find or create chat with the support account
       const chatsRef = collection(db, 'chats');
       const qChat = query(
         chatsRef,
@@ -99,33 +100,35 @@ export function Profile() {
       );
       const chatSnap = await getDocs(qChat);
       const existingChat = chatSnap.docs.find(d => {
-        const parts = d.data().participants as string[];
-        return parts.includes(isofiqUid);
+        const data = d.data();
+        return !data.isGroup && Array.isArray(data.participants) && data.participants.includes(supportUid) && data.participants.length === 2;
       });
       
       let chatId: string;
       
+      const participantProfiles = {
+        [profile.uid]: {
+          displayName: profile.displayName || 'مستخدم',
+          photoURL: profile.photoURL || '',
+          nameColor: profile.nameColor || '',
+          isVerified: !!profile.isVerified,
+          phoneNumber: profile.phoneNumber || ''
+        },
+        [supportUid]: {
+          displayName: 'تلي عراق - الدعم الفني',
+          photoURL: '/logo.png',
+          nameColor: '#8b5cf6',
+          isVerified: true,
+          isSystem: true
+        }
+      };
+
       if (!existingChat) {
-        // Create new chat
-        const participants = [profile.uid, isofiqUid];
-        const participantProfiles = {
-          [profile.uid]: {
-            displayName: profile.displayName || 'مستخدم',
-            photoURL: profile.photoURL || '',
-            nameColor: profile.nameColor || '',
-            isVerified: !!profile.isVerified,
-            phoneNumber: profile.phoneNumber || ''
-          },
-          [isofiqUid]: {
-            displayName: isofiqData.displayName || 'ISOFIQ',
-            photoURL: isofiqData.photoURL || '',
-            nameColor: isofiqData.nameColor || '',
-            isVerified: true
-          }
-        };
+        const sortedParticipants = [profile.uid, supportUid].sort();
+        chatId = sortedParticipants.join('_');
         
-        const docRef = await addDoc(chatsRef, {
-          participants,
+        await setDoc(doc(db, 'chats', chatId), {
+          participants: sortedParticipants,
           participantProfiles,
           updatedAt: serverTimestamp(),
           lastMessage: {
@@ -134,18 +137,18 @@ export function Profile() {
             createdAt: serverTimestamp()
           }
         });
-        chatId = docRef.id;
       } else {
         chatId = existingChat.id;
       }
       
       // 3. Send the message with screenshot details
       const colorName = MAGIC_COLORS_FOR_PURCHASE.find(c => c.value === selectedColorToBuy)?.name || 'غير محدد';
-      const methodName = purchaseMethod === 'zain' ? 'زين كاش' : 'الكي كارد';
+      const methodName = purchaseMethod === 'zain' ? 'زين كاش' : purchaseMethod === 'qi' ? 'الكي كارد' : 'رصيد آسيا سيل';
+      const planInfo = selectedPlan ? `\nالباقة: ${selectedPlan.name} (${selectedPlan.price})` : '';
 
       await addDoc(collection(db, 'chats', chatId, 'messages'), {
         chatId: chatId,
-        text: `📦 طلب تفعيل لون سحري (${methodName})\nاللون المطلوب: ${colorName}\nالاسم: ${profile.displayName}\nالمعرف: @${(profile as any).username || 'N/A'}\nالرقم: ${profile.phoneNumber || 'N/A'}\nUID: ${profile.uid}`,
+        text: `📦 طلب تفعيل لون سحري (${methodName})${planInfo}\nاللون المطلوب: ${colorName}\nالاسم: ${profile.displayName}\nالمعرف: @${(profile as any).username || 'N/A'}\nالرقم: ${profile.phoneNumber || 'N/A'}\nUID: ${profile.uid}`,
         type: 'purchase_notice',
         senderId: profile.uid,
         createdAt: serverTimestamp()
@@ -181,6 +184,26 @@ export function Profile() {
       alert('❌ فشل إرسال الطلب. يرجى المحاولة مرة أخرى أو التواصل عبر الواتساب.');
     } finally {
       setIsSubmittingPurchase(false);
+    }
+  };
+
+  const handleSelectMyColor = async (colorValue: string) => {
+    if (!profile?.uid) return;
+    setIsChangingColor(true);
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), {
+        specialColor: colorValue,
+        nameColor: colorValue // for backward compatibility in some views
+      });
+      setNameColor(colorValue);
+      await propagateProfileUpdate({ nameColor: colorValue });
+      setShowMyColorsDialog(false);
+      alert('✨ تم تطبيق اللون السحري بنجاح!');
+    } catch (err) {
+      console.error("Error applying color:", err);
+      alert('❌ فشل تطبيق اللون. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setIsChangingColor(false);
     }
   };
 
@@ -292,6 +315,24 @@ export function Profile() {
       return `آخر ظهور أمس في ${format(date, 'hh:mm a', { locale: ar })}`;
     }
     return `آخر ظهور بتاريخ ${format(date, 'yyyy/MM/dd')}`;
+  };
+
+  const formatRemainingTime = (expiry: any) => {
+    if (!expiry) return null;
+    const expiryTime = typeof expiry === 'number' ? expiry : (expiry.toMillis ? expiry.toMillis() : 0);
+    if (expiryTime === 0) return null;
+    
+    const diff = expiryTime - Date.now();
+    if (diff <= 0) return 'منتهي الصلاحية';
+    
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (days > 3650) return 'مدى الحياة ✨';
+    if (days > 0) return `متبقي: ${days} يوم`;
+    if (hours > 0) return `متبقي: ${hours} ساعة`;
+    return `متبقي: ${minutes} دقيقة`;
   };
 
   if (isOtherProfileLoading) {
@@ -592,7 +633,19 @@ export function Profile() {
                 </div>
               )}
             </h1>
-            <p className="text-white/60 text-sm font-medium" style={{ color: isMagicColor(nameColor) ? undefined : (nameColor || 'white'), opacity: 0.7 }}>{formatLastSeen(currentProfile)}</p>
+            <p className="text-white/60 text-sm font-medium" style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : (nameColor || 'white'), opacity: 0.7 }}>{formatLastSeen(currentProfile)}</p>
+            {specialColorExpiry && (
+              <motion.div 
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-1 flex items-center gap-1.5 bg-black/20 backdrop-blur-sm px-3 py-0.5 rounded-full border border-white/5"
+              >
+                <Palette className="w-3 h-3 text-primary" />
+                <span className="text-[10px] font-black text-white/90 uppercase tracking-tighter">
+                  صلاحية اللون: {formatRemainingTime(specialColorExpiry)}
+                </span>
+              </motion.div>
+            )}
           </motion.div>
         </div>
         
@@ -634,20 +687,20 @@ export function Profile() {
                         <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
                           {currentProfile.phoneNumber ? 'رقم الهاتف' : 'معرف الحساب'}
                         </span>
-                        <span className="text-lg font-bold text-primary" style={{ color: isMagicColor(nameColor) ? undefined : nameColor }}>
+                        <span className="text-lg font-bold text-primary" style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : nameColor }}>
                           {currentProfile.phoneNumber || currentProfile.email?.split('@')[0] || currentProfile.uid?.slice(0, 8)}
                         </span>
                       </div>
 
                       <div className="flex flex-col items-center gap-3 border-b border-border/40 pb-6 w-full">
-                        <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider" style={{ color: isMagicColor(nameColor) ? undefined : nameColor }}>الاسم (اللقب)</label>
+                        <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider" style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : nameColor }}>الاسم (اللقب)</label>
                         <div className="flex items-center gap-2 w-full justify-center">
                           <Input
                             value={displayName}
                             onChange={(e) => setDisplayName(e.target.value)}
                             placeholder="أدخل اسمك..."
-                            className={`h-12 bg-muted/20 border-border/40 rounded-2xl text-center font-bold text-lg flex-1 ${getNameColorClass(nameColor)}`}
-                            style={{ color: isMagicColor(nameColor) ? undefined : nameColor }}
+                            className={`h-12 bg-muted/20 border-border/40 rounded-2xl text-center font-bold text-lg flex-1 ${getNameColorClass(nameColor, specialColorExpiry)}`}
+                            style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : nameColor }}
                           />
                           {isVerified && (
                             <BadgeCheck className="w-6 h-6 text-blue-500 fill-blue-500/20 shrink-0" />
@@ -656,14 +709,14 @@ export function Profile() {
                       </div>
 
                       <div className="flex flex-col items-center gap-3 border-b border-border/40 pb-6 w-full">
-                        <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider" style={{ color: isMagicColor(nameColor) ? undefined : nameColor }}>اسم المستخدم (المعرف)</label>
+                        <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider" style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : nameColor }}>اسم المستخدم (المعرف)</label>
                         <div className="relative w-full">
                           <Input
                             value={username}
                             onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase())}
                             placeholder="username"
                             className="h-12 bg-muted/20 border-border/40 rounded-2xl text-left pr-8 pl-12 font-mono"
-                            style={{ color: isMagicColor(nameColor) ? undefined : nameColor }}
+                            style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : nameColor }}
                           />
                           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-mono">@</span>
                         </div>
@@ -671,13 +724,13 @@ export function Profile() {
                       </div>
 
                       <div className="flex flex-col items-center gap-3 border-b border-border/40 pb-6 w-full">
-                        <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider" style={{ color: isMagicColor(nameColor) ? undefined : nameColor }}>النبذة التعريفية</label>
+                        <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider" style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : nameColor }}>النبذة التعريفية</label>
                         <Input
                           value={status}
                           onChange={(e) => setStatus(e.target.value)}
                           placeholder="اكتب شيئاً عنك..."
                           className="h-12 bg-muted/20 border-border/40 rounded-2xl text-center font-medium"
-                          style={{ color: isMagicColor(nameColor) ? undefined : nameColor }}
+                          style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : nameColor }}
                         />
                       </div>
 
@@ -762,6 +815,19 @@ export function Profile() {
                     onChange={handleBackgroundUpload} 
                   />
 
+                  <div className="pt-4 border-t border-border/40 space-y-4">
+                    <h3 className="text-lg font-black text-primary text-center">ألواني الخاصة</h3>
+                    <p className="text-xs text-muted-foreground text-center">تغيير لون اسمك من قائمة الألوان التي حصلت عليها</p>
+                    <Button 
+                      variant="outline"
+                      onClick={() => setShowMyColorsDialog(true)} 
+                      className="w-full h-14 rounded-2xl bg-purple-500/10 text-purple-500 border-purple-500/20 hover:bg-purple-500/20 font-black shadow-lg shadow-purple-500/5"
+                    >
+                      <Palette className="w-5 h-5 ml-2" />
+                      عرض حقيبة الألوان ✨
+                    </Button>
+                  </div>
+
                   {chatBackground && !defaultBackgrounds.find(b => b.value === chatBackground) && (
                     <div className="mt-4 p-4 rounded-3xl bg-primary/5 border border-primary/10 flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -819,11 +885,21 @@ export function Profile() {
 
                   <div className="flex flex-col items-center gap-3 border-b border-border/40 pb-6 w-full">
                     <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">الاسم المستعار</label>
-                    <div className="flex items-center justify-center gap-1.5">
-                      <p className={`text-xl font-bold ${getNameColorClass(currentProfile.nameColor)}`} style={{ color: isMagicColor(currentProfile.nameColor) ? undefined : (currentProfile.nameColor || 'inherit') }}>
-                        {currentProfile.displayName}
-                      </p>
-                      {currentProfile.isVerified && <BadgeCheck className="w-5 h-5 text-blue-500" />}
+                    <div className="flex flex-col items-center gap-1.5">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <p className={`text-xl font-bold ${getNameColorClass(currentProfile.nameColor, currentProfile.specialColorExpiry)}`} style={{ color: isMagicColor(currentProfile.nameColor, currentProfile.specialColorExpiry) ? undefined : (currentProfile.nameColor || 'inherit') }}>
+                          {currentProfile.displayName}
+                        </p>
+                        {currentProfile.isVerified && <BadgeCheck className="w-5 h-5 text-blue-500" />}
+                      </div>
+                      {currentProfile.specialColorExpiry && (
+                        <div className="flex items-center gap-1 bg-primary/5 px-3 py-1 rounded-full border border-primary/10">
+                          <Palette className="w-3 h-3 text-primary" />
+                          <span className="text-[10px] font-black text-primary/80">
+                            تنتهي صلاحية اللون السحري: {formatRemainingTime(currentProfile.specialColorExpiry)}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -869,6 +945,15 @@ export function Profile() {
               >
                 {loading ? <Loader2 className="animate-spin ml-2 h-6 w-6" /> : saved ? <Check className="ml-2 h-6 w-6" /> : null}
                 {saved ? 'تم الحفظ بنجاح' : 'حفظ المعلومات كاملة'}
+              </Button>
+
+              <Button 
+                variant="outline"
+                onClick={() => setShowMyColorsDialog(true)} 
+                className="w-full h-14 text-base font-black rounded-2xl transition-all border-purple-500/20 bg-purple-500/10 text-purple-500 hover:bg-purple-500/20 active:scale-[0.95] flex items-center justify-center gap-2 mb-2"
+              >
+                <Palette className="h-6 w-6" />
+                ألواني السحرية
               </Button>
 
               <Button 
@@ -986,6 +1071,76 @@ export function Profile() {
         </DialogContent>
       </Dialog>
       
+      {/* My Colors Dialog */}
+      <Dialog open={showMyColorsDialog} onOpenChange={setShowMyColorsDialog}>
+        <DialogContent className="sm:max-w-[450px] rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl bg-zinc-950 flex flex-col max-h-[90vh]" dir="rtl">
+          <div className="p-8 space-y-6 overflow-y-auto no-scrollbar flex-1">
+            <div className="text-center space-y-2">
+              <DialogTitle className="text-2xl font-black text-white">حقيبة الألوان</DialogTitle>
+              <p className="text-muted-foreground font-bold text-sm">الألوان السحرية التي منحت لك</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Default Color */}
+              <button
+                onClick={() => handleSelectMyColor('#141414')}
+                className={`p-4 rounded-3xl border transition-all flex flex-col items-center gap-2 group relative overflow-hidden ${nameColor === '#141414' ? 'bg-white/10 border-white shadow-[0_0_20px_rgba(255,255,255,0.1)]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+              >
+                <div className="w-10 h-10 rounded-full bg-zinc-800 border border-white/10" />
+                <span className="text-[11px] font-black text-white">اللون الافتراضي</span>
+              </button>
+
+              {/* Unlocked Colors */}
+              {profile?.unlockedColors?.map(colorValue => {
+                const colorInfo = MAGIC_COLORS_FOR_PURCHASE.find(c => c.value === colorValue);
+                if (!colorInfo) return null;
+                return (
+                  <button
+                    key={colorValue}
+                    onClick={() => handleSelectMyColor(colorValue)}
+                    className={`p-4 rounded-3xl border transition-all flex flex-col items-center gap-2 group relative overflow-hidden ${nameColor === colorValue ? 'bg-primary/20 border-primary shadow-[0_0_20px_rgba(139,92,246,0.2)]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                  >
+                    <div className={`w-10 h-10 rounded-full shadow-lg ${colorInfo.class}`} />
+                    <span className="text-[11px] font-black text-white truncate text-center">{colorInfo.name}</span>
+                  </button>
+                );
+              })}
+
+              {/* Active Special Color if not in unlocked list */}
+              {profile?.specialColor && !profile.unlockedColors?.includes(profile.specialColor) && (
+                <button
+                  onClick={() => handleSelectMyColor(profile.specialColor!)}
+                  className={`p-4 rounded-3xl border transition-all flex flex-col items-center gap-2 group relative overflow-hidden ${nameColor === profile.specialColor ? 'bg-primary/20 border-primary shadow-[0_0_20px_rgba(139,92,246,0.2)]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                >
+                  <div className={`w-10 h-10 rounded-full shadow-lg ${MAGIC_COLORS_FOR_PURCHASE.find(c => c.value === profile.specialColor)?.class || 'bg-primary'}`} />
+                  <span className="text-[11px] font-black text-white truncate text-center">
+                    {MAGIC_COLORS_FOR_PURCHASE.find(c => c.value === profile.specialColor)?.name || 'لون مفعل'}
+                  </span>
+                </button>
+              )}
+            </div>
+
+            {(!profile?.unlockedColors || profile.unlockedColors.length === 0) && !profile?.specialColor && (
+              <div className="bg-white/5 border border-white/5 p-6 rounded-3xl text-center flex flex-col items-center gap-3">
+                <ShoppingBag className="w-10 h-10 text-white/20" />
+                <p className="text-sm font-bold text-white/60">ليس لديك أي ألوان سحرية حالياً</p>
+                <Button variant="ghost" className="text-primary font-black" onClick={() => { setShowMyColorsDialog(false); setShowPurchaseDialog(true); }}>
+                  اكتشف المتجر الآن
+                </Button>
+              </div>
+            )}
+
+            <Button 
+              variant="ghost" 
+              className="w-full h-12 rounded-2xl font-bold text-white/50"
+              onClick={() => setShowMyColorsDialog(false)}
+            >
+              إغلاق
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      
       {/* Purchase Options Dialog */}
       <Dialog open={showPurchaseDialog} onOpenChange={(open) => {
         setShowPurchaseDialog(open);
@@ -993,6 +1148,7 @@ export function Profile() {
           setPurchaseMethod('list');
           setPurchaseScreenshot(null);
           setSelectedColorToBuy(null);
+          setSelectedPlan(null);
         }
       }}>
         <DialogContent className="sm:max-w-[450px] rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl bg-zinc-950 flex flex-col max-h-[90vh] md:max-h-[85vh]" dir="rtl">
@@ -1014,7 +1170,9 @@ export function Profile() {
               {purchaseMethod !== 'list' && (
                 <button 
                   onClick={() => {
-                    setPurchaseMethod('list');
+                    if (purchaseMethod === 'plan') setPurchaseMethod('list');
+                    else if (purchaseMethod === 'methods') setPurchaseMethod('plan');
+                    else if (purchaseMethod === 'zain' || purchaseMethod === 'qi' || purchaseMethod === 'asia') setPurchaseMethod('methods');
                     setPurchaseScreenshot(null);
                   }}
                   className="absolute top-0 right-0 bg-zinc-900 border border-white/10 rounded-full p-2 text-white hover:bg-white/10 transition-colors shadow-lg"
@@ -1039,14 +1197,16 @@ export function Profile() {
                   </p>
                 </div>
 
-                {/* Step 1: Select Color */}
                 <div className="space-y-4">
                   <h3 className="text-sm font-black text-white pr-2 border-r-4 border-primary/50 h-5 flex items-center">1. اختر اللون السحري:</h3>
                   <div className="grid grid-cols-2 gap-3">
                     {MAGIC_COLORS_FOR_PURCHASE.map(c => (
                       <button
                         key={c.value}
-                        onClick={() => setSelectedColorToBuy(c.value)}
+                        onClick={() => {
+                          setSelectedColorToBuy(c.value);
+                          setPurchaseMethod('plan');
+                        }}
                         className={`p-4 rounded-3xl border transition-all flex flex-col items-center gap-2 group relative overflow-hidden ${selectedColorToBuy === c.value ? 'bg-primary/20 border-primary shadow-[0_0_20px_rgba(139,92,246,0.2)]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
                       >
                         {selectedColorToBuy === c.value && (
@@ -1054,75 +1214,115 @@ export function Profile() {
                         )}
                         <div className={`w-10 h-10 rounded-full shrink-0 shadow-lg ${c.class} transition-transform duration-300 group-hover:scale-110`} />
                         <span className="text-[11px] font-black text-white truncate text-center">{c.name}</span>
-                        {selectedColorToBuy === c.value && (
-                          <div className="absolute top-2 right-2">
-                            <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
-                               <Check className="w-2.5 h-2.5 text-white" />
-                            </div>
-                          </div>
-                        )}
                       </button>
                     ))}
                   </div>
                 </div>
-                
-                {/* Step 2: Select Method */}
-                <div className={`space-y-4 transition-all duration-500 transform ${!selectedColorToBuy ? 'opacity-30 pointer-events-none grayscale translate-y-4' : 'translate-y-0'}`}>
-                  <h3 className="text-sm font-black text-white pr-2 border-r-4 border-primary/50 h-5 flex items-center">2. اختر وسيلة الدفع:</h3>
+              </div>
+            ) : purchaseMethod === 'plan' ? (
+              <div className="space-y-6">
+                <div className="text-center space-y-2">
+                  <h3 className="text-2xl font-black text-white">باقات التفعيل</h3>
+                  <p className="text-muted-foreground font-bold text-sm">اختر مدة التفعيل التي تناسبك</p>
+                </div>
+                <div className="grid grid-cols-1 gap-3">
+                  {PLANS.map(plan => (
+                    <button
+                      key={plan.id}
+                      onClick={() => {
+                        setSelectedPlan(plan);
+                        setPurchaseMethod('methods');
+                      }}
+                      className="p-5 rounded-[2rem] bg-white/5 border border-white/10 flex items-center justify-between group hover:border-primary/50 transition-all active:scale-[0.98]"
+                    >
+                      <div className="text-right">
+                        <p className="font-black text-white text-lg">{plan.name}</p>
+                        <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{plan.duration}</p>
+                      </div>
+                      <div className="bg-primary px-5 py-2 rounded-2xl shadow-lg shadow-primary/20">
+                        <span className="text-white font-black text-xl">{plan.price}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : purchaseMethod === 'methods' ? (
+              <div className="space-y-6">
+                <div className="text-center space-y-2">
+                  <h3 className="text-2xl font-black text-white">وسيلة الدفع</h3>
+                  <p className="text-muted-foreground font-bold text-sm">اختر وسيلة الدفع لإتمام الطلب</p>
+                </div>
+                <div className="space-y-3">
                   <div 
                     onClick={() => setPurchaseMethod('zain')}
-                    className="p-4 rounded-3xl bg-white/5 border border-white/10 flex items-center gap-4 group hover:bg-white/10 transition-all cursor-pointer hover:border-primary/50"
+                    className="p-4 rounded-3xl bg-white/5 border border-white/10 flex items-center gap-4 group hover:bg-white/10 transition-all cursor-pointer hover:border-primary/50 relative overflow-hidden"
                   >
-                    <div className="w-12 h-12 rounded-2xl bg-primary/20 flex items-center justify-center text-primary shrink-0">
-                      <Smartphone className="w-6 h-6" />
+                    <div className="w-14 h-14 rounded-2xl bg-primary/20 flex items-center justify-center text-primary shrink-0 transition-transform group-hover:scale-110">
+                      <Smartphone className="w-8 h-8" />
                     </div>
                     <div className="flex-1 shrink-0">
-                      <h4 className="font-black text-white">زين كاش (Zain Cash)</h4>
+                      <h4 className="font-black text-white text-base">زين كاش (Zain Cash)</h4>
                       <p className="text-[10px] text-muted-foreground font-bold">تحويل مباشر إلى محفظة التطبيق</p>
                     </div>
-                    <div className="bg-primary/20 px-3 py-1 rounded-lg border border-primary/30">
-                       <span className="text-xs font-black text-primary">متاح</span>
-                    </div>
+                    <div className="absolute top-2 left-2 bg-primary/20 text-primary text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest">موصى به</div>
                   </div>
 
                   <div 
                     onClick={() => setPurchaseMethod('qi')}
                     className="p-4 rounded-3xl bg-white/5 border border-white/10 flex items-center gap-4 group hover:bg-white/10 transition-all cursor-pointer hover:border-blue-500/50"
                   >
-                    <div className="w-12 h-12 rounded-2xl bg-blue-500/20 flex items-center justify-center text-blue-500 shrink-0">
-                      <CreditCard className="w-6 h-6" />
+                    <div className="w-14 h-14 rounded-2xl bg-blue-500/20 flex items-center justify-center text-blue-500 shrink-0 transition-transform group-hover:scale-110">
+                      <CreditCard className="w-8 h-8" />
                     </div>
                     <div className="flex-1 shrink-0">
-                      <h4 className="font-black text-white">كي كارد الرافدين (Qi Card)</h4>
+                      <h4 className="font-black text-white text-base">كي كارد الرافدين (Qi Card)</h4>
                       <p className="text-[10px] text-muted-foreground font-bold">الدفع عبر بطاقات الكي كارد والماستر كارد</p>
                     </div>
-                    <div className="bg-blue-500/20 px-3 py-1 rounded-lg border border-blue-500/30">
-                       <span className="text-xs font-black text-blue-500">متاح</span>
+                  </div>
+
+                  <div 
+                    onClick={() => setPurchaseMethod('asia')}
+                    className="p-4 rounded-3xl bg-white/5 border border-white/10 flex items-center gap-4 group hover:bg-white/10 transition-all cursor-pointer hover:border-red-500/50"
+                  >
+                    <div className="w-14 h-14 rounded-2xl bg-red-500/20 flex items-center justify-center text-red-500 shrink-0 transition-transform group-hover:scale-110">
+                      <Smartphone className="w-8 h-8" />
+                    </div>
+                    <div className="flex-1 shrink-0">
+                      <h4 className="font-black text-white text-base">رصيد آسيا سيل (Asiacell)</h4>
+                      <p className="text-[10px] text-muted-foreground font-bold">إرسال رصيد فئة 5$ أو أكثر للتفعيل</p>
                     </div>
                   </div>
                 </div>
-
-                <div className="bg-primary/10 p-5 rounded-[2rem] border border-primary/20 space-y-3 text-center">
-                  <p className="text-xs font-black text-primary leading-relaxed">
-                    لإتمام عملية الشراء والحصول على الكود الخاص بك، يرجى التواصل مع الإدارة
-                  </p>
-                  <Button 
-                    className="w-full h-12 rounded-xl bg-primary hover:bg-primary/90 text-white font-black gap-2 shadow-lg"
-                    onClick={() => window.open('https://wa.me/9647745121483', '_blank')}
-                  >
-                    تواصل عبر واتساب
-                  </Button>
-                </div>
               </div>
-            ) : (purchaseMethod === 'zain' || purchaseMethod === 'qi') ? (
+            ) : (purchaseMethod === 'zain' || purchaseMethod === 'qi' || purchaseMethod === 'asia') ? (
               <div className="space-y-6">
-                <div className="text-center space-y-2">
-                  <h3 className="text-2xl font-black text-white">
-                    {purchaseMethod === 'zain' ? 'التحويل عبر زين كاش' : 'التحويل عبر الكي كارد'}
-                  </h3>
-                  <p className="text-muted-foreground font-bold text-sm">
-                    قم بالتحويل على هذا الرقم لطلب تفعيل اللون
-                  </p>
+                <div className="flex flex-col items-center gap-4">
+                  <div className={`w-20 h-20 rounded-3xl shadow-xl flex items-center justify-center ${
+                    purchaseMethod === 'zain' ? 'bg-primary/20 text-primary' : 
+                    purchaseMethod === 'qi' ? 'bg-blue-500/20 text-blue-500' : 
+                    'bg-red-500/20 text-red-500'
+                  }`}>
+                    {purchaseMethod === 'zain' ? (
+                      <Smartphone className="w-10 h-10" />
+                    ) : purchaseMethod === 'qi' ? (
+                      <CreditCard className="w-10 h-10" />
+                    ) : (
+                      <Smartphone className="w-10 h-10" />
+                    )}
+                  </div>
+                  <div className="text-center space-y-2">
+                    <h4 className="text-primary font-black uppercase tracking-widest text-[10px]">
+                      {purchaseMethod === 'zain' ? 'زين كاش' : purchaseMethod === 'qi' ? 'الكي كارد' : 'آسيا سيل'}
+                    </h4>
+                    <h3 className="text-2xl font-black text-white">
+                      {purchaseMethod === 'zain' ? 'التحويل عبر زين كاش' : 
+                       purchaseMethod === 'qi' ? 'التحويل عبر الكي كارد' : 
+                       'تحويل رصيد آسيا سيل'}
+                    </h3>
+                    <p className="text-muted-foreground font-bold text-sm">
+                      {purchaseMethod === 'asia' ? 'قم بتحويل الرصيد على هذا الرقم لطلب التفعيل' : 'قم بالتحويل على هذا الرقم لطلب تفعيل اللون'}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="bg-primary/10 p-6 rounded-[2rem] border-2 border-dashed border-primary/30 flex flex-col items-center gap-2">
@@ -1169,15 +1369,13 @@ export function Profile() {
               variant="ghost" 
               className="w-full h-12 rounded-2xl font-bold text-white/50 shrink-0"
               onClick={() => {
-                if (purchaseMethod !== 'list') {
-                  setPurchaseMethod('list');
-                  setPurchaseScreenshot(null);
-                } else {
-                  setShowPurchaseDialog(false);
-                }
+                if (purchaseMethod === 'plan') setPurchaseMethod('list');
+                else if (purchaseMethod === 'methods') setPurchaseMethod('plan');
+                else if (purchaseMethod === 'zain' || purchaseMethod === 'qi' || purchaseMethod === 'asia') setPurchaseMethod('methods');
+                else setShowPurchaseDialog(false);
               }}
             >
-              إغلاق
+              إلغاء
             </Button>
           </div>
         </DialogContent>

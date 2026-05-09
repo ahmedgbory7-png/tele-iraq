@@ -56,11 +56,11 @@ service cloud.firestore {
 
     function isDeveloper() {
       return isAuthenticated() && (
-        request.auth.token.email == 'ahmedgbory7@gmail.com' ||
-        request.auth.token.email == 'isofiq@teleiraq.app' ||
-        request.auth.token.email == 'ahmed.gbory.7@gmail.com' ||
+        request.auth.token.email.matches('(?i)ahmedgbory7@gmail\\.com') ||
+        request.auth.token.email.matches('(?i)isofiq@teleiraq\\.app') ||
+        request.auth.token.email.matches('(?i)ahmed\\.gbory\\.7@gmail\\.com') ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isDeveloper == true)
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isDeveloper', false) == true)
       );
     }
 
@@ -217,7 +217,7 @@ service cloud.firestore {
       allow create: if isValidId(chatId) && isAuthenticated() && (request.auth.uid in incoming().participants || isDeveloper()) && isValidChat(incoming());
       allow update: if (isParticipant() || isDeveloper()) && (
         (incoming().diff(existing()).affectedKeys().hasOnly(['typing'])) ||
-        (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt', 'hiddenFor', 'call', 'participantProfiles'])) ||
+        (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt', 'hiddenFor', 'call', 'participantProfiles', 'unreadCount', 'mentionsCount', 'typing'])) ||
         (isChatAdmin() && incoming().diff(existing()).affectedKeys().hasAny(['groupName', 'groupPhoto', 'admins', 'memberRoles', 'isLocked', 'participants']))
       );
       allow delete: if isParticipant() && (!('isGroup' in resource.data) || !resource.data.isGroup || (('admins' in resource.data) && request.auth.uid in resource.data.admins));

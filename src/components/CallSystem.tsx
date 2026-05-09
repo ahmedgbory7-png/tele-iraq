@@ -55,8 +55,8 @@ const servers = {
         'stun:stun1.l.google.com:19302',
         'stun:stun2.l.google.com:19302',
         'stun:stun3.l.google.com:19302',
-        'stun:stun4.l.google.com:19302',
-        'stun:stun.l.google.com:19302'
+        'stun:stun.l.google.com:19302',
+        'stun:stun.services.mozilla.com'
       ],
     },
   ],
@@ -67,7 +67,7 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
   const [pc, setPc] = useState<RTCPeerConnection | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [status, setStatus] = useState<'calling' | 'active' | 'ended'>('calling');
+  const [status, setStatus] = useState<'calling' | 'connecting' | 'active' | 'ended' | 'busy' | 'reconnecting' | 'failed'>('calling');
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(type === 'voice');
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
@@ -76,11 +76,32 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
   const [quality, setQuality] = useState<'excellent' | 'good' | 'fair' | 'poor'>('excellent');
   const [latency, setLatency] = useState<number | null>(null);
   const [packetLoss, setPacketLoss] = useState<number>(0);
+  const { setAppAlert } = useStore();
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const candidateQueue = useRef<RTCIceCandidate[]>([]);
   const ringtoneRef = useRef<HTMLAudioElement | null>(null);
+  const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    // Timeout call after 45 seconds of no connection
+    connectionTimeoutRef.current = setTimeout(() => {
+      if (status === 'calling' || status === 'connecting') {
+        console.log("Call timeout reached");
+        endCall();
+        setAppAlert({ 
+          id: 'call-timeout', 
+          message: 'لم يتم الرد على المكالمة أو فشل الاتصال', 
+          type: 'info' 
+        });
+      }
+    }, 45000);
+
+    return () => {
+      if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+    };
+  }, [status]);
 
   useEffect(() => {
     let playPromise: Promise<void> | null = null;
@@ -127,21 +148,32 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
       try {
         const peerConnection = new RTCPeerConnection(servers);
         
-        // Always request video if possible to allow smooth transition, 
-        // but we'll disable the track immediately if it's a voice call
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
+        // Request media based on call type with fallback
+        let stream: MediaStream;
+        const constraints = {
+          video: type === 'video' ? { facingMode: 'user' } : false,
           audio: true,
-        });
+        };
 
-        // If it's a voice call, disable video tracks initially
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err) {
+          console.warn("Failed to get media with constraints:", constraints, err);
+          if (type === 'video') {
+            // Fallback to audio only if video failed
+            console.log("Falling back to audio only");
+            stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+            setIsVideoOff(true);
+          } else {
+            throw err;
+          }
+        }
+
+        // Even for video call, if it's supposed to be audio only initially (or if requested)
         if (type === 'voice') {
           stream.getVideoTracks().forEach(track => {
             track.enabled = false;
           });
-          setIsVideoOff(true);
-        } else {
-          setIsVideoOff(false);
         }
 
         stream.getTracks().forEach((track) => {
@@ -160,6 +192,35 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
             remoteVideoRef.current.srcObject = remoteStream;
           }
           setStatus('active');
+        };
+
+        peerConnection.onconnectionstatechange = () => {
+          console.log("Connection state changed:", peerConnection.connectionState);
+          switch(peerConnection.connectionState) {
+            case 'connected':
+              setStatus('active');
+              break;
+            case 'connecting':
+              setStatus('connecting');
+              break;
+            case 'disconnected':
+              setStatus('reconnecting');
+              break;
+            case 'failed':
+              setStatus('failed');
+              setTimeout(() => endCall(), 3000);
+              break;
+            case 'closed':
+              setStatus('ended');
+              break;
+          }
+        };
+
+        peerConnection.oniceconnectionstatechange = () => {
+          console.log("ICE connection state changed:", peerConnection.iceConnectionState);
+          if (peerConnection.iceConnectionState === 'disconnected') {
+            setStatus('reconnecting');
+          }
         };
 
         setPc(peerConnection);
@@ -203,6 +264,7 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
           const data = snapshot.data();
           if (!peerConnection.currentRemoteDescription && data?.answer) {
             console.log("Answer received, setting remote description");
+            setStatus('connecting');
             const answerDescription = new RTCSessionDescription(data.answer);
             peerConnection.setRemoteDescription(answerDescription).then(() => {
               console.log("Remote description set, processing queued candidates:", candidateQueue.current.length);
@@ -210,9 +272,11 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
               candidateQueue.current = [];
             }).catch(e => console.error("Error setting remote description", e));
           }
-          if (data?.status === 'ended' || data?.status === 'rejected') {
-            onEnd();
-          }
+              if (data?.status === 'ended' || data?.status === 'rejected' || data?.status === 'busy') {
+                if (data?.status === 'busy') setStatus('busy');
+                else if (data?.status === 'rejected') setStatus('ended');
+                setTimeout(() => onEnd(), data?.status === 'busy' ? 4000 : 1500);
+              }
         });
 
         onSnapshot(receiverCandidatesCollection, (snapshot) => {
@@ -230,6 +294,7 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
           });
         });
       } else if (callId) {
+        setStatus('connecting');
         const callDoc = doc(db, 'calls', callId);
         const callerCandidatesCollection = collection(callDoc, 'callerCandidates');
         const receiverCandidatesCollection = collection(callDoc, 'receiverCandidates');
@@ -281,9 +346,12 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
         });
 
           onSnapshot(callDoc, (snapshot) => {
-            const status = snapshot.data()?.status;
-            if (status === 'ended' || status === 'rejected') {
-              onEnd();
+            const data = snapshot.data();
+            const status = data?.status;
+            if (status === 'ended' || status === 'rejected' || status === 'busy') {
+              if (status === 'busy') setStatus('busy');
+              else if (status === 'rejected') setStatus('ended');
+              setTimeout(() => onEnd(), status === 'busy' ? 4000 : 1500);
             }
           });
         }
@@ -428,9 +496,20 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
               <div className="text-center space-y-2">
                 <h2 className="text-2xl font-black text-white tracking-tight">{otherProfile?.displayName}</h2>
                 <div className="flex items-center justify-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${status === 'active' ? 'bg-green-500 animate-pulse' : 'bg-primary animate-bounce'}`} />
+                  <div className={`w-2 h-2 rounded-full ${
+                    status === 'active' ? 'bg-green-500 animate-pulse' : 
+                    status === 'reconnecting' ? 'bg-yellow-500 animate-pulse' :
+                    status === 'failed' ? 'bg-red-500' :
+                    status === 'busy' ? 'bg-orange-500' :
+                    'bg-primary animate-bounce'
+                  }`} />
                   <p className="text-primary font-bold text-xs uppercase tracking-widest">
-                    {status === 'calling' ? (isCaller ? 'جاري الاتصال...' : 'اتصال وارد...') : 'مكالمة جارية'}
+                    {status === 'calling' ? (isCaller ? 'جاري الاتصال...' : 'اتصال وارد...') : 
+                     status === 'connecting' ? 'جاري الربط...' : 
+                     status === 'reconnecting' ? 'جاري إعادة الاتصال...' :
+                     status === 'failed' ? 'فشل الاتصال' :
+                     status === 'busy' ? 'الخط مشغول حالياً' :
+                     'مكالمة جارية'}
                   </p>
                 </div>
               </div>

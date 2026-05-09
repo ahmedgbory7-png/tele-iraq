@@ -46,7 +46,8 @@ export default function App() {
     quotaExceeded, setQuotaExceeded,
     showUserDashboard, setShowUserDashboard,
     chats, setChats,
-    fontSize
+    fontSize, setActiveRealCall,
+    isFocusMode
   } = useStore();
 
   useEffect(() => {
@@ -70,6 +71,12 @@ export default function App() {
   const [incomingCall, setIncomingCall] = useState<any>(null);
 
   useEffect(() => {
+    if (user) {
+      requestNotificationPermission();
+    }
+  }, [user]);
+
+  useEffect(() => {
     if (!user) {
       setGlobalCall(null);
       setNotification(null);
@@ -77,6 +84,7 @@ export default function App() {
       setChats([]);
       senderProfilesRef.current = {};
       setIncomingCall(null);
+      setActiveRealCall(null); // Clear active call on logout
       if (ringtoneRef.current) {
         ringtoneRef.current.pause();
         ringtoneRef.current = null;
@@ -94,9 +102,20 @@ export default function App() {
       limit(1)
     );
 
-    const callUnsubscribe = onSnapshot(callsQ, (snapshot) => {
+    const callUnsubscribe = onSnapshot(callsQ, async (snapshot) => {
+      const currentActiveCall = useStore.getState().activeRealCall;
       if (!snapshot.empty) {
-        const callData = { ...snapshot.docs[0].data(), id: snapshot.docs[0].id } as any;
+        const callDoc = snapshot.docs[0];
+        const callData = { ...callDoc.data(), id: callDoc.id } as any;
+
+        if (currentActiveCall) {
+          // Send busy status if already in call
+          try {
+            await updateDoc(doc(db, 'calls', callData.id), { status: 'busy' });
+          } catch (e) {}
+          return;
+        }
+
         setIncomingCall(callData);
         
         // Notification & Ringtone
@@ -107,9 +126,21 @@ export default function App() {
         }
 
         if (document.hidden || !document.hasFocus()) {
+          // Fetch caller profile for better notification
+          let callerName = callData.callerId?.slice(0,6) + '...';
+          try {
+            const callerSnap = await getDocFromServer(doc(db, 'users', callData.callerId));
+            if (callerSnap.exists()) {
+              callerName = callerSnap.data().displayName;
+            }
+          } catch (err) {}
+
+          const callTypeText = callData.type === 'video' ? 'فيديو' : 'صوتية';
           showSystemNotification('مكالمة واردة', {
-            body: `يتصل بك ${callData.callerId?.slice(0,6)}...`,
-            tag: 'incoming-call'
+            body: `مكالمة ${callTypeText} من ${callerName}`,
+            tag: 'incoming-call',
+            requireInteraction: true,
+            silent: false
           });
         }
       } else {
@@ -216,13 +247,18 @@ export default function App() {
                 senderName,
                 text: chatData.lastMessage.text
               });
+              
+              const settings = JSON.parse(localStorage.getItem('app-notifications') || '{"private":true,"groups":true,"calls":true,"globalMute":false}');
+              const isGlobalMuted = settings.globalMute === true;
 
               // Also show system notification
-              showSystemNotification(senderName, {
-                body: chatData.lastMessage.text,
-                tag: chatId, // Replace older notifications from same chat
-                renotify: true
-              } as any);
+              if (!isGlobalMuted) {
+                showSystemNotification(senderName, {
+                  body: chatData.lastMessage.text,
+                  tag: chatId, // Replace older notifications from same chat
+                  renotify: true
+                } as any);
+              }
 
               // Clear notification after 5 seconds
               setTimeout(() => {
@@ -237,8 +273,9 @@ export default function App() {
                 
                 // Only play sound if notifications are enabled for this type
                 const isEnabled = isGroup ? settings.groups : settings.private;
+                const isGlobalMuted = settings.globalMute === true;
                 
-                if (isEnabled) {
+                if (isEnabled && !isGlobalMuted) {
                   // Check for chat-specific sound first
                   const chatSound = state.chatSounds[chatId];
                   const soundId = chatSound || (isGroup ? state.groupChatSound : state.privateChatSound);
@@ -537,8 +574,9 @@ export default function App() {
           initial={false}
           animate={{ 
             x: isSubPageActive ? '100.1%' : '0%',
-            opacity: isSubPageActive ? 0.4 : 1,
-            scale: isSubPageActive ? 0.98 : 1
+            opacity: isFocusMode && isSubPageActive ? 0.05 : (isSubPageActive ? 0.4 : 1),
+            scale: isFocusMode && isSubPageActive ? 0.9 : (isSubPageActive ? 0.98 : 1),
+            filter: isFocusMode && isSubPageActive ? 'blur(10px)' : 'blur(0px)'
           }}
           drag={(!isSubPageActive && !!lastChatId) ? "x" : false}
           dragConstraints={{ left: 0, right: 0 }}
@@ -628,8 +666,26 @@ export default function App() {
               </Button>
               <Button 
                 className="flex-1 h-14 rounded-2xl bg-green-600 hover:bg-green-700 text-white gap-2 font-bold shadow-lg shadow-green-500/20 active:scale-95 transition-transform"
-                onClick={() => {
-                   setActiveChatId(incomingCall.chatId);
+                onClick={async () => {
+                   const chatId = incomingCall.chatId;
+                   const callData = incomingCall;
+                   
+                   // Fetch other profile if needed for the call screen
+                   let otherP = null;
+                   try {
+                     const snap = await getDoc(doc(db, 'users', callData.callerId));
+                     if (snap.exists()) otherP = snap.data();
+                   } catch (e) {}
+                   
+                   // Set active real call before switching chat to avoid race
+                   setActiveRealCall({ 
+                     type: callData.type, 
+                     isCaller: false, 
+                     callId: callData.id 
+                   });
+                   
+                   setActiveChatId(chatId);
+                   setIncomingCall(null);
                 }}
               >
                 <Phone className="w-5 h-5" />
@@ -666,52 +722,58 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Telegram-style Bottom Navigation */}
+      {/* Main Bottom Navigation Bar */}
       <AnimatePresence>
         {!isSubPageActive && (
           <motion.div 
-            initial={{ y: 100 }}
-            animate={{ y: 0 }}
-            exit={{ y: 100 }}
-            className="h-16 bg-card border-t flex items-center justify-around px-4 pb-safe z-[60]"
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 20, opacity: 0 }}
+            className="fixed bottom-0 inset-x-0 h-20 bg-background/80 backdrop-blur-2xl border-t border-border/50 flex items-center justify-around px-2 pb-safe z-[60] shadow-[0_-10px_30px_rgba(0,0,0,0.05)]"
           >
-            {/* Bottom Nav Items */}
             {[
-              { id: 'chats', icon: MessageSquare, label: t.chats },
-              { id: 'contacts', icon: Users, label: t.myContacts },
-              { id: 'settings', icon: SettingsIcon, label: t.settings },
-              { id: 'profile', icon: UserIcon, label: t.editProfile }
-            ].map((tab) => (
-              <motion.button
-                key={tab.id}
-                whileTap={{ scale: 0.9 }}
-                whileHover={{ scale: 1.1, y: -2 }}
-                onClick={() => setCurrentTab(tab.id as any)}
-                className={`flex flex-col items-center justify-center gap-1 min-w-[64px] transition-all ios-touch ${
-                  currentTab === tab.id ? 'text-primary' : 'text-muted-foreground'
-                }`}
-              >
-                <div className="relative">
-                  <tab.icon className={`w-5 h-5 transition-transform ${currentTab === tab.id ? 'fill-primary/10 scale-110' : ''}`} />
-                  {tab.id === 'chats' && totalUnread > 0 && (
+              { id: 'chats', icon: MessageSquare, label: language === 'العربية' ? 'المحادثات' : 'Chats' },
+              { id: 'contacts', icon: Users, label: language === 'العربية' ? 'جهات الاتصال' : 'Contacts' },
+              { id: 'profile', icon: UserIcon, label: language === 'العربية' ? 'الملف الشخصي' : 'Profile' },
+              { id: 'settings', icon: SettingsIcon, label: language === 'العربية' ? 'الإعدادات' : 'Settings' }
+            ].map((tab) => {
+              const isActive = currentTab === tab.id;
+              return (
+                <motion.button
+                  key={tab.id}
+                  whileTap={{ scale: 0.92 }}
+                  onClick={() => setCurrentTab(tab.id as any)}
+                  className={`relative flex flex-col items-center justify-center gap-1.5 w-[72px] h-14 transition-all ${
+                    isActive ? 'text-primary' : 'text-muted-foreground/60'
+                  }`}
+                >
+                  {isActive && (
                     <motion.div 
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] px-1 rounded-full bg-primary text-white text-[8px] font-bold flex items-center justify-center border border-card"
-                    >
-                      {totalUnread > 99 ? '99+' : totalUnread}
-                    </motion.div>
+                      layoutId="nav-active-bg"
+                      className="absolute inset-0 bg-primary/10 rounded-2xl -z-10"
+                      transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
+                    />
                   )}
-                </div>
-                <span className="text-[10px] font-medium">{tab.label}</span>
-                {currentTab === tab.id && (
-                  <motion.div 
-                    layoutId="activeTab"
-                    className="w-1 h-1 rounded-full bg-primary mt-0.5"
-                  />
-                )}
-              </motion.button>
-            ))}
+                  
+                  <div className="relative">
+                    <tab.icon className={`w-5 h-5 transition-all duration-300 ${isActive ? 'scale-110 stroke-[2.5px]' : 'scale-100 opacity-80'}`} />
+                    {tab.id === 'chats' && totalUnread > 0 && (
+                      <motion.div 
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full bg-primary text-white text-[9px] font-black flex items-center justify-center border-2 border-background shadow-lg"
+                      >
+                        {totalUnread > 99 ? '99+' : totalUnread}
+                      </motion.div>
+                    )}
+                  </div>
+                  
+                  <span className={`text-[10px] font-black uppercase tracking-tight transition-all duration-300 ${isActive ? 'opacity-100 translate-y-0' : 'opacity-60 translate-y-0.5'}`}>
+                    {tab.label}
+                  </span>
+                </motion.button>
+              );
+            })}
           </motion.div>
         )}
       </AnimatePresence>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '@/firebase';
-import { collection, query, limit, getDocs, doc, getDoc, updateDoc, setDoc, orderBy, where, serverTimestamp, Timestamp, writeBatch, increment, getCountFromServer, addDoc } from 'firebase/firestore';
+import { collection, query, limit, getDocs, doc, getDoc, updateDoc, setDoc, orderBy, where, serverTimestamp, Timestamp, writeBatch, increment, getCountFromServer, addDoc, arrayUnion } from 'firebase/firestore';
 import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,7 +23,12 @@ import {
   LayoutDashboard,
   ArrowRight,
   UserPlus,
-  RefreshCcw
+  RefreshCcw,
+  Info,
+  Calendar,
+  MapPin,
+  CreditCard,
+  History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getNameColorClass, isMagicColor } from '@/lib/utils';
@@ -39,8 +44,8 @@ const MAGIC_COLORS = [
   { name: 'لون كربوني 🖤', value: 'animated-carbon' },
   { name: 'بنفسجي سحري 🔮', value: 'animated-purple' },
   { name: 'قوس قزح 🌈', value: 'animated-rainbow' },
-  { name: 'ناري 🔥', value: 'animated-fire' },
   { name: 'اصفر فسفوري متحرك ⚡', value: 'animated-neon-yellow' },
+  { name: 'ناري 🔥', value: 'animated-fire' },
   { name: 'احمر متحرك فسفوري 🍓', value: 'animated-neon-red' },
   { name: 'الذهبي الملكي 👑', value: 'animated-gold' },
   { name: 'الفضي اللامع 🥈', value: 'animated-silver' },
@@ -74,10 +79,27 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
   const [selectedUserForColor, setSelectedUserForColor] = useState<{ uid: string, color: string } | null>(null);
   const [expiryDays, setExpiryDays] = useState('30');
   const [confirmResetColor, setConfirmResetColor] = useState<string | null>(null);
+  const [accountInfoUser, setAccountInfoUser] = useState<UserProfile | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const formatRemainingTime = (expiry: any) => {
+    if (!expiry) return null;
+    const expiryTime = typeof expiry === 'number' ? expiry : (expiry.toMillis ? expiry.toMillis() : 0);
+    if (expiryTime === 0) return null;
+    
+    const diff = expiryTime - Date.now();
+    if (diff <= 0) return 'منتهي الصلاحية';
+    
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    
+    if (days > 3650) return 'مدى الحياة ✨';
+    if (days > 0) return `متبقي: ${days} يوم`;
+    return `متبقي: ${hours} ساعة`;
   };
 
   const fetchStats = async () => {
@@ -288,6 +310,10 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
         isVerified: !isRemoval,
         verifiedAt: !isRemoval ? serverTimestamp() : null
       };
+
+      if (!isRemoval) {
+        updateData.unlockedColors = arrayUnion(color);
+      }
       
       console.log("Updating user document...");
       await updateDoc(doc(db, 'users', userId), updateData);
@@ -356,12 +382,34 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
     try {
       const supportUid = 'teleiraq-system';
       const participants = [supportUid, targetUid].sort();
-      const chatId = participants.join('_');
+      const deterministicChatId = participants.join('_');
       
-      const chatRef = doc(db, 'chats', chatId);
-      const chatSnap = await getDoc(chatRef);
+      // 1. Try deterministic ID first
+      let chatRef = doc(db, 'chats', deterministicChatId);
+      let chatSnap = await getDoc(chatRef);
+      let chatId = deterministicChatId;
+
+      // 2. If not found, try querying by participants
+      if (!chatSnap.exists()) {
+        const q = query(
+          collection(db, 'chats'),
+          where('participants', 'array-contains', targetUid)
+        );
+        const snap = await getDocs(q);
+        const existing = snap.docs.find(d => {
+          const data = d.data();
+          return !data.isGroup && Array.isArray(data.participants) && data.participants.includes(supportUid) && data.participants.length === 2;
+        });
+        
+        if (existing) {
+          chatId = existing.id;
+          chatRef = doc(db, 'chats', chatId);
+          chatSnap = await getDoc(chatRef);
+        }
+      }
 
       const messageData = {
+        chatId,
         text,
         senderId: supportUid,
         createdAt: serverTimestamp(),
@@ -369,6 +417,10 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
       };
 
       if (!chatSnap.exists()) {
+        // Fetch user profile to include in participants
+        const userSnap = await getDoc(doc(db, 'users', targetUid));
+        const userData = userSnap.data();
+
         await setDoc(chatRef, {
           participants,
           isGroup: false,
@@ -378,10 +430,16 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
           participantProfiles: {
             [supportUid]: {
               displayName: 'تلي عراق - الدعم الفني',
-              photoURL: '/logo.png', // or system logo
+              photoURL: '/logo.png',
               nameColor: '#8b5cf6',
               isVerified: true,
               isSystem: true
+            },
+            [targetUid]: {
+              displayName: userData?.displayName || 'مستخدم',
+              photoURL: userData?.photoURL || '',
+              nameColor: userData?.nameColor || '',
+              isVerified: userData?.isVerified || false
             }
           }
         });
@@ -552,9 +610,22 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
                   <div className="flex flex-wrap gap-2">
                      <p className="text-[10px] bg-white/5 text-muted-foreground px-3 py-1 rounded-full font-bold">{u.phoneNumber || 'لا يوجد رقم'}</p>
                      <p className="text-[10px] bg-primary/10 text-primary px-3 py-1 rounded-full font-bold">Role: {u.isDeveloper ? 'Admin' : 'User'}</p>
+                     {u.specialColor && (
+                       <p className={`text-[10px] px-3 py-1 rounded-full font-black border ${formatRemainingTime(u.specialColorExpiry) === 'منتهي الصلاحية' ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-primary/10 border-primary/20 text-primary'}`}>
+                         {formatRemainingTime(u.specialColorExpiry) || 'تاريخ غير محدد'}
+                       </p>
+                     )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 mt-2">
+                    <Button 
+                      variant="outline" 
+                      className="h-10 rounded-xl text-[10px] font-black border-white/5 hover:bg-zinc-800 transition-all text-white flex items-center justify-center gap-1.5 col-span-2"
+                      onClick={() => setAccountInfoUser(u)}
+                    >
+                      <Info className="w-3.5 h-3.5" />
+                      معلومات الحساب
+                    </Button>
                     <Button 
                       variant="outline" 
                       className={`h-10 rounded-xl text-[10px] font-black border-white/10 bg-primary/20 text-primary hover:bg-primary/30 flex items-center justify-center gap-1.5 transition-all shadow-sm ${u.specialColor ? 'ring-2 ring-primary ring-offset-2 ring-offset-zinc-950' : ''}`}
@@ -678,6 +749,129 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
                    <Trash2 className="w-4 h-4" />
                    إزالة النظام
                  </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Account Information Modal */}
+      <Dialog open={!!accountInfoUser} onOpenChange={() => setAccountInfoUser(null)}>
+        <DialogContent className="max-w-md w-[95%] rounded-[3rem] bg-zinc-950 border-white/10 text-right font-sans p-0 overflow-hidden shadow-2xl" dir="rtl">
+          {accountInfoUser && (
+            <div className="flex flex-col h-full">
+              {/* Header with Background Pattern */}
+              <div className="relative p-8 overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-transparent to-transparent opacity-50" />
+                <div className="relative flex items-center gap-5">
+                  <Avatar className="h-20 w-20 border-4 border-white/10 shadow-2xl">
+                    <AvatarImage src={accountInfoUser.photoURL} />
+                    <AvatarFallback style={{ backgroundColor: accountInfoUser.nameColor }} className="text-2xl font-black">{accountInfoUser.displayName?.slice(0,2)}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1">
+                    <h2 className="text-2xl font-black text-white">{accountInfoUser.displayName}</h2>
+                    <p className="text-xs text-primary font-bold">معلومات الحساب التفصيلية</p>
+                    <div className="mt-2 flex gap-2">
+                       {accountInfoUser.isVerified && <span className="bg-blue-500/10 text-blue-500 text-[8px] font-black px-2 py-0.5 rounded-full border border-blue-500/20 uppercase tracking-widest">Verified</span>}
+                       {accountInfoUser.isDeveloper && <span className="bg-red-500/10 text-red-500 text-[8px] font-black px-2 py-0.5 rounded-full border border-red-500/20 uppercase tracking-widest">Admin</span>}
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={() => setAccountInfoUser(null)} className="rounded-full bg-white/5 hover:bg-white/10 shrink-0">
+                    <X className="w-5 h-5 text-white" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Info Grid */}
+              <div className="px-8 pb-10 space-y-4">
+                <div className="grid grid-cols-1 gap-3">
+                  {/* Name */}
+                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group transition-all hover:bg-white/10">
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">الاسم الكامل</p>
+                      <p className="text-sm font-bold text-white">{accountInfoUser.displayName}</p>
+                    </div>
+                  </div>
+
+                  {/* Joined Date */}
+                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group transition-all hover:bg-white/10">
+                    <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center text-green-500 group-hover:scale-110 transition-transform">
+                      <Calendar className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">تاريخ الانضمام</p>
+                      <p className="text-sm font-bold text-white">
+                        {accountInfoUser.createdAt ? (
+                          new Intl.DateTimeFormat('ar-IQ', { dateStyle: 'full', timeStyle: 'short' }).format(accountInfoUser.createdAt.toDate())
+                        ) : 'غير متوفر'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Location */}
+                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group transition-all hover:bg-white/10">
+                    <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
+                      <MapPin className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">الموقع (المدينة)</p>
+                      <p className="text-sm font-bold text-white">{accountInfoUser.city || 'غير محدد'}</p>
+                    </div>
+                  </div>
+
+                  {/* Color Details */}
+                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex flex-col gap-4 group transition-all hover:bg-white/10">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
+                        <Palette className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">اللون النشط</p>
+                        <p className={`text-sm font-black ${getNameColorClass(accountInfoUser.specialColor || accountInfoUser.nameColor || '#fff', accountInfoUser.specialColorExpiry)}`}>
+                          {accountInfoUser.specialColor ? (MAGIC_COLORS.find(c => c.value === accountInfoUser.specialColor)?.name || 'لون مخصص') : 'اللون الافتراضي'}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {accountInfoUser.specialColor && (
+                      <div className="pr-14 flex items-center justify-between">
+                         <div>
+                            <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">صلاحية اللون</p>
+                            <p className="text-xs font-bold text-amber-500">{formatRemainingTime(accountInfoUser.specialColorExpiry)}</p>
+                         </div>
+                         <div className="text-left">
+                            <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5 text-left">طريقة الشراء</p>
+                            <p className="text-xs font-bold text-white">{(accountInfoUser as any).lastPurchaseMethod || 'غير متوفر'}</p>
+                         </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Join Program Date (Same as Created) */}
+                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group transition-all hover:bg-white/10">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
+                      <History className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">تاريخ الانضمام للبرنامج</p>
+                      <p className="text-sm font-bold text-white">
+                        {accountInfoUser.createdAt ? (
+                          new Intl.DateTimeFormat('ar-IQ', { dateStyle: 'medium' }).format(accountInfoUser.createdAt.toDate())
+                        ) : 'غير متوفر'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <Button 
+                  className="w-full h-14 rounded-2xl font-black bg-white/5 border border-white/10 hover:bg-white/10 text-white shadow-xl transition-all active:scale-[0.98]"
+                  onClick={() => setAccountInfoUser(null)}
+                >
+                  إغلاق نافذة المعلومات
+                </Button>
               </div>
             </div>
           )}

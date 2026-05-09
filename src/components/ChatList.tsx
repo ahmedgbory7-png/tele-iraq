@@ -619,8 +619,11 @@ export function ChatList() {
       if (existing) {
         setActiveChatId(existing.id);
       } else {
+        const sortedParticipants = [currentUser.uid, systemUser.uid].sort();
+        const chatId = sortedParticipants.join('_');
+        
         const newChat = {
-          participants: [currentUser.uid, systemUser.uid],
+          participants: sortedParticipants,
           participantProfiles: getParticipantProfiles([currentUser, systemUser]),
           updatedAt: serverTimestamp(),
           lastMessage: {
@@ -629,15 +632,16 @@ export function ChatList() {
             createdAt: serverTimestamp()
           }
         };
-        const docRef = await addDoc(collection(db, 'chats'), newChat);
-        await addDoc(collection(db, 'chats', docRef.id, 'messages'), {
-          chatId: docRef.id,
+        
+        await setDoc(doc(db, 'chats', chatId), newChat);
+        await addDoc(collection(db, 'chats', chatId, 'messages'), {
+          chatId: chatId,
           senderId: systemUser.uid,
           text: 'أهلاً بك في تلي عراق! أنا النظام الآلي. كيف يمكنني مساعدتك اليوم؟ 🇮🇶',
           type: 'text',
           createdAt: serverTimestamp()
         });
-        setActiveChatId(docRef.id);
+        setActiveChatId(chatId);
       }
     } catch (err) {
       console.error("System chat error:", err);

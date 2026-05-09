@@ -26,6 +26,7 @@ import {
   Plus,
   Volume2,
   Trash2,
+  Maximize2,
   Loader2,
   RotateCcw
 } from 'lucide-react';
@@ -71,7 +72,9 @@ export function Settings() {
     groupChatSound,
     setGroupChatSound,
     quotaExceeded,
-    dataUsageStats
+    dataUsageStats,
+    isFocusMode,
+    setIsFocusMode
   } = useStore();
 
   if (!profile) return null;
@@ -87,7 +90,7 @@ export function Settings() {
   const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [showDevPanel, setShowDevPanel] = useState(false);
-  const [notifications, setNotifications] = useState(() => JSON.parse(localStorage.getItem('app-notifications') || '{"private":true,"groups":true,"calls":true,"privateSound":"default","groupSound":"default"}'));
+  const [notifications, setNotifications] = useState(() => JSON.parse(localStorage.getItem('app-notifications') || '{"private":true,"groups":true,"calls":true,"globalMute":false}'));
   const [dataUsage, setDataUsage] = useState(() => JSON.parse(localStorage.getItem('app-data-usage') || '{"autoDownload":true,"lowDataMode":false}'));
   const [isTerminating, setIsTerminating] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -191,8 +194,26 @@ export function Settings() {
 
     if (url) {
       const audio = new Audio(url);
+      audio.volume = 0.5;
       audio.play().catch(e => console.log("Audio play blocked", e));
     }
+  };
+
+  const testNotification = async () => {
+    const granted = await requestNotificationPermission();
+    if (!granted) {
+      alert(language === 'English' ? 'Notifications are blocked. Please enable them in browser settings.' : 'الإشعارات محظورة. يرجى تفعيلها من إعدادات المتصفح.');
+      return;
+    }
+
+    alert(language === 'English' ? 'A test notification will arrive in 3 seconds. Please lock your phone or switch apps.' : 'سسيصلك إشعار تجريبي خلال 3 ثواني. يرجى الخروج من المتصفح أو قفل الشاشة.');
+    
+    setTimeout(() => {
+      showSystemNotification('تلي عراق - تجربة', {
+        body: 'هذا إشعار تجريبي للتأكد من عمل التنبيهات بنجاح 🇮🇶',
+        tag: 'test-notification'
+      });
+    }, 3000);
   };
 
   const handleCustomSoundUpload = (type: 'private' | 'group', e: React.ChangeEvent<HTMLInputElement>) => {
@@ -371,6 +392,26 @@ export function Settings() {
                 </div>
 
                 <div className="space-y-4 pt-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Maximize2 className="h-5 w-5 text-primary" />
+                      <div className="flex-1">
+                        <span className="font-bold text-sm">وضع التركيز (Focus Mode)</span>
+                        <p className="text-[10px] text-muted-foreground">{language === 'English' ? 'Focus on active chat, hide background' : 'التركيز على المحادثة النشطة، اخفاء الخلفية'}</p>
+                      </div>
+                    </div>
+                    <Button 
+                      size="sm" 
+                      variant={isFocusMode ? "default" : "outline"} 
+                      onClick={() => setIsFocusMode(!isFocusMode)}
+                      className="rounded-full h-8 px-4"
+                    >
+                      {isFocusMode ? 'مفعل' : 'معطل'}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-4 pt-2">
                   <div className="flex items-center gap-3">
                     <ImageIcon className="h-5 w-5 text-primary" />
                     <div className="flex-1">
@@ -469,24 +510,55 @@ export function Settings() {
             <TabsContent value="notifications" className="m-0 p-4 space-y-4">
               <div className="bg-card rounded-2xl border p-4 space-y-4 shadow-sm">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0 transition-transform active:scale-95 ios-touch" onClick={testNotification}>
                     <Bell className="h-5 w-5" />
                   </div>
                   <div className="flex-1">
                     <p className="font-bold text-sm">إشعارات النظام</p>
-                    <p className="text-[10px] text-muted-foreground">تنبيهات فورية على جهازك</p>
+                    <p className="text-[10px] text-muted-foreground">التنبيهات {permissionStatus === 'granted' ? 'مفعلة' : 'معطلة'} حالياً</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-lg text-[10px] px-3 font-bold"
+                      onClick={testNotification}
+                    >
+                      تجربة
+                    </Button>
+                    <Button 
+                      variant={permissionStatus === 'granted' ? "outline" : "default"}
+                      size="sm"
+                      className="h-8 rounded-lg text-[10px] px-4 font-bold"
+                      onClick={async () => {
+                        const granted = await requestNotificationPermission();
+                        setPermissionStatus(granted ? 'granted' : 'denied');
+                        if (granted) alert('تم التفعيل ✅');
+                        else alert('يرجى تفعيلها من إعدادات المتصفح لضمان وصول الرسائل ⚠️');
+                      }}
+                    >
+                      {permissionStatus === 'granted' ? 'مفعلة' : 'تفعيل'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-card rounded-2xl border p-4 space-y-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Volume2 className={`h-5 w-5 ${notifications.globalMute ? 'text-destructive' : 'text-primary'}`} />
+                    <div className="flex-1">
+                      <span className="font-bold text-sm">وضع الصامت العام</span>
+                      <p className="text-[10px] text-muted-foreground">كتم جميع الأصوات والإشعارات فوراً</p>
+                    </div>
                   </div>
                   <Button 
-                    variant={permissionStatus === 'granted' ? "outline" : "default"}
-                    size="sm"
-                    className="h-8 rounded-lg text-[10px]"
-                    onClick={async () => {
-                      const granted = await requestNotificationPermission();
-                      setPermissionStatus(granted ? 'granted' : 'denied');
-                      if (granted) alert('تم التفعيل ✅');
-                    }}
+                    size="sm" 
+                    variant={notifications.globalMute ? "destructive" : "outline"} 
+                    onClick={() => toggleNotification('globalMute')}
+                    className="rounded-full h-8 px-4 font-bold"
                   >
-                    {permissionStatus === 'granted' ? 'مفعلة' : 'تفعيل'}
+                    {notifications.globalMute ? 'مفعل' : 'معطل'}
                   </Button>
                 </div>
               </div>

@@ -30,6 +30,7 @@ export interface UserProfile {
   createdAt?: any;
   specialColor?: string;
   specialColorExpiry?: any;
+  unlockedColors?: string[];
   forceLogoutSignal?: number;
   verifiedAt?: any;
   sessionVersion?: number;
