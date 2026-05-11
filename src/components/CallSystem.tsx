@@ -232,9 +232,11 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
           const callerCandidatesCollection = collection(callDoc, 'callerCandidates');
           const receiverCandidatesCollection = collection(callDoc, 'receiverCandidates');
 
+        let candidateCount = 0;
         peerConnection.onicecandidate = (event) => {
-          if (event.candidate && !useStore.getState().quotaExceeded) {
-            console.log("Adding local ICE candidate to Firestore");
+          if (event.candidate && !useStore.getState().quotaExceeded && candidateCount < 10) {
+            candidateCount++;
+            console.log("Adding local ICE candidate to Firestore (count: " + candidateCount + ")");
             addDoc(callerCandidatesCollection, event.candidate.toJSON()).catch(err => {
               if (err.code === 'resource-exhausted') useStore.getState().setQuotaExceeded(true);
             });
@@ -299,9 +301,11 @@ export default function CallSystem({ chatId, currentUser, otherProfile, type, is
         const callerCandidatesCollection = collection(callDoc, 'callerCandidates');
         const receiverCandidatesCollection = collection(callDoc, 'receiverCandidates');
 
+        let candidateCount = 0;
         peerConnection.onicecandidate = (event) => {
-          if (event.candidate && !useStore.getState().quotaExceeded) {
-            console.log("Adding local receiver ICE candidate to Firestore");
+          if (event.candidate && !useStore.getState().quotaExceeded && candidateCount < 10) {
+            candidateCount++;
+            console.log("Adding local receiver ICE candidate to Firestore (count: " + candidateCount + ")");
             addDoc(receiverCandidatesCollection, event.candidate.toJSON()).catch(err => {
               if (err.code === 'resource-exhausted') useStore.getState().setQuotaExceeded(true);
             });

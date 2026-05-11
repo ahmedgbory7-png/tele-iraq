@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { X, Circle, RotateCcw, Trophy } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useStore } from '@/store/useStore';
 
 interface XOGameProps {
   onMove?: (board: ('X' | 'O' | null)[], winner: 'X' | 'O' | 'Draw' | null) => void;
@@ -34,7 +35,7 @@ export function XOGame({ onMove, gameState, isPlayerTurn, gameWinner }: XOGamePr
   };
 
   const handleClick = (i: number) => {
-    if (board[i] || gameWinner || !isPlayerTurn) return;
+    if (board[i] || gameWinner || !isPlayerTurn || useStore.getState().quotaExceeded) return;
 
     const newBoard = [...board];
     const currentPlayerSymbol = board.filter(x => x).length % 2 === 0 ? 'X' : 'O';
@@ -45,6 +46,7 @@ export function XOGame({ onMove, gameState, isPlayerTurn, gameWinner }: XOGamePr
   };
 
   const resetGame = () => {
+    if (useStore.getState().quotaExceeded) return;
     onMove?.(Array(9).fill(null), null);
   };
 

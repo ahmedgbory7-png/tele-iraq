@@ -6,13 +6,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Search, UserPlus, Loader2, BadgeCheck, X, Plus, UserMinus, MessageSquare, User, Bot, Phone, Share2, Copy, Check, UserCheck } from 'lucide-react';
+import { Search, UserPlus, Loader2, BadgeCheck, X, Plus, UserMinus, MessageSquare, User, Bot, Phone, Share2, Copy, Check, UserCheck, RefreshCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GroupedVirtuoso } from 'react-virtuoso';
 import { useStore } from '@/store/useStore';
 import { translations } from '@/lib/i18n';
 import { getNameColorClass, isMagicColor } from '@/lib/utils';
-
+import { DEV_EMAILS, DEV_USERNAMES, SUPPORT_UID, SUPPORT_NAME } from '@/constants';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ContactListProps {
@@ -63,56 +63,59 @@ export function ContactList({ onClose }: ContactListProps) {
       });
   }, [currentUser?.friends, currentUser?.friendDetails]);
 
-  // Fetch missing friend details in the background
-  useEffect(() => {
-    if (!currentUser?.uid || !currentUser?.friends) return;
+  // Fetch missing friend details in the background with improved reliability
+  const syncFriends = async () => {
+    if (!currentUser?.uid || !currentUser?.friends || useStore.getState().quotaExceeded) return;
 
     const friendIds = currentUser.friends || [];
     const detailsMap = currentUser.friendDetails || {};
     const missingIds = friendIds.filter(id => id && id !== currentUser.uid && (!detailsMap[id] || (detailsMap[id] as any).specialColor === undefined) && !processedMissingIds.current.has(id));
 
     if (missingIds.length > 0) {
-      const fetchMissing = async () => {
-        if (quotaExceeded) return;
-        // Chunk missing IDs into groups of 30 (Firestore 'in' limit)
-        const chunks = [];
-        for (let i = 0; i < missingIds.length; i += 30) {
-          chunks.push(missingIds.slice(i, i + 30));
-        }
+      // Chunk missing IDs into groups of 30 (Firestore 'in' limit)
+      const chunks = [];
+      for (let i = 0; i < missingIds.length; i += 30) {
+        chunks.push(missingIds.slice(i, i + 30));
+      }
 
-        const batchUpdates: Record<string, any> = {};
-        
-        for (const chunk of chunks) {
-          try {
-            chunk.forEach(id => processedMissingIds.current.add(id));
-            const q = query(collection(db, 'users'), where('uid', 'in', chunk));
-            const querySnapshot = await getDocs(q);
-            
-            querySnapshot.forEach(d => {
-              const data = d.data() as UserProfile;
-              batchUpdates[`friendDetails.${data.uid}`] = {
-                displayName: data.displayName || 'مستخدم',
-                photoURL: data.photoURL || '',
-                nameColor: data.nameColor || '',
-                specialColor: data.specialColor || null,
-                isVerified: !!data.isVerified,
-                phoneNumber: data.phoneNumber || ''
-              };
-            });
-          } catch (err: any) {
-            console.error("Error fetching missing friends batch:", err);
-            if (err.code === 'resource-exhausted') setQuotaExceeded(true);
-          }
+      const batchUpdates: Record<string, any> = {};
+      
+      for (const chunk of chunks) {
+        try {
+          chunk.forEach(id => processedMissingIds.current.add(id));
+          const q = query(collection(db, 'users'), where('uid', 'in', chunk));
+          const querySnapshot = await getDocs(q);
+          
+          querySnapshot.forEach(d => {
+            const data = d.data() as UserProfile;
+            batchUpdates[`friendDetails.${data.uid}`] = {
+              displayName: data.displayName || 'مستخدم',
+              photoURL: data.photoURL || '',
+              nameColor: data.nameColor || '',
+              specialColor: data.specialColor || null,
+              isVerified: !!data.isVerified,
+              phoneNumber: data.phoneNumber || '',
+              username: (data as any).username || ''
+            };
+          });
+        } catch (err: any) {
+          console.error("Error fetching missing friends batch:", err);
+          if (err.code === 'resource-exhausted') setQuotaExceeded(true);
         }
+      }
 
-/* Commented out to save Quota - fetching satisfies local view
-        if (Object.keys(batchUpdates).length > 0) {
-          updateDoc(doc(db, 'users', currentUser.uid), batchUpdates).catch(console.error);
+      if (Object.keys(batchUpdates).length > 0) {
+        try {
+          await updateDoc(doc(db, 'users', currentUser.uid), batchUpdates);
+        } catch (err: any) {
+          if (err.code === 'resource-exhausted') setQuotaExceeded(true);
         }
-        */
-      };
-      fetchMissing();
+      }
     }
+  };
+
+  useEffect(() => {
+    syncFriends();
   }, [currentUser?.uid, currentUser?.friends]);
 
   const getParticipantProfiles = (users: UserProfile[]) => {
@@ -136,9 +139,9 @@ export function ContactList({ onClose }: ContactListProps) {
     
     try {
       const systemUser: UserProfile = {
-        uid: 'teleiraq-system',
+        uid: SUPPORT_UID,
         phoneNumber: '+964000000000',
-        displayName: 'تلي عراق (الدعم الفني)',
+        displayName: SUPPORT_NAME,
         status: 'دائماً في خدمتك 🇮🇶 تم تطويري بالذكاء الاصطناعي',
         nameColor: 'magic_rb',
         isVerified: true,
@@ -198,22 +201,31 @@ export function ContactList({ onClose }: ContactListProps) {
     // If searching, we show search results, otherwise we show friends from reactive list
     const list = [...(searchQuery.length > 0 ? searchResults : friendsList)];
     
-    // Improved sorting for Arabic
+    // Improved sorting for Arabic & English
     list.sort((a, b) => {
-      const nameA = (a.displayName || '').replace(/^الـ|^ال/g, '');
-      const nameB = (b.displayName || '').replace(/^الـ|^ال/g, '');
-      return nameA.localeCompare(nameB, 'ar');
+      const nameA = (a.displayName || '').replace(/^الـ|^ال/g, '').trim();
+      const nameB = (b.displayName || '').replace(/^الـ|^ال/g, '').trim();
+      
+      // Separate English and Arabic if needed, but localeCompare with 'ar' handles it relatively well
+      return nameA.localeCompare(nameB, ['ar', 'en'], { sensitivity: 'accent' });
     });
 
+    const groups: { letter: string; startIndex: number; count: number }[] = [];
     const counts: number[] = [];
     const groupLetters: string[] = [];
     let currentCount = 0;
     let currentLetter = '';
+    let startIndex = 0;
 
     list.forEach((user, idx) => {
       let name = user.displayName || '#';
-      let letter = name.replace(/^الـ|^ال/g, '')[0]?.toUpperCase() || '#';
-      if (/[أإآ]/.test(letter)) letter = 'ا';
+      let firstChar = name.replace(/^الـ|^ال/g, '').trim()[0]?.toUpperCase() || '#';
+      
+      // Normalize Arabic Alef
+      if (/[أإآ]/.test(firstChar)) firstChar = 'ا';
+      
+      // For English or others, keep as is
+      const letter = firstChar;
 
       if (idx === 0) {
         currentLetter = letter;
@@ -223,16 +235,34 @@ export function ContactList({ onClose }: ContactListProps) {
         currentCount++;
       } else {
         counts.push(currentCount);
+        groups.push({ letter: currentLetter, startIndex, count: currentCount });
+        startIndex += currentCount;
         currentLetter = letter;
         currentCount = 1;
         groupLetters.push(letter);
       }
     });
 
-    if (currentCount > 0) counts.push(currentCount);
+    if (currentCount > 0) {
+      counts.push(currentCount);
+      groups.push({ letter: currentLetter, startIndex, count: currentCount });
+    }
 
-    return { list, counts, groupLetters };
+    return { list, counts, groupLetters, groups };
   }, [searchQuery, searchResults, friendsList]);
+
+  const virtuosoRef = useRef<any>(null);
+
+  const scrollToGroup = (letter: string) => {
+    const group = contactsData.groups.find(g => g.letter === letter);
+    if (group && virtuosoRef.current) {
+      virtuosoRef.current.scrollToIndex({
+        index: group.startIndex,
+        align: 'start',
+        behavior: 'smooth'
+      });
+    }
+  };
 
   // Removed old useEffect for fetching contacts manually as it's now derived
 
@@ -493,6 +523,17 @@ export function ContactList({ onClose }: ContactListProps) {
             variant="ghost" 
             size="icon" 
             className="rounded-full h-10 w-10 text-primary"
+            onClick={() => {
+              processedMissingIds.current.clear();
+              syncFriends();
+            }}
+          >
+            <RefreshCcw className="h-5 w-5" />
+          </Button>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="rounded-full h-10 w-10 text-primary"
             onClick={handleShare}
           >
             <Share2 className="h-5 w-5" />
@@ -554,17 +595,19 @@ export function ContactList({ onClose }: ContactListProps) {
       </AnimatePresence>
 
       {/* Contacts List */}
-      <div className="flex-1 min-h-0 relative overflow-y-auto no-scrollbar scroll-smooth">
-        <GroupedVirtuoso
-          style={{ height: '100%' }}
-          data={contactsData.list}
-          groupCounts={contactsData.counts}
-          groupContent={(index) => (
-              <div className="bg-muted/80 backdrop-blur-sm px-6 py-2 text-[10px] font-bold text-primary uppercase tracking-widest border-b sticky top-0 z-[5] flex items-center justify-between">
-                <span>{contactsData.groupLetters[index]}</span>
-                <span className="bg-primary/10 px-2 py-0.5 rounded-full text-[9px]">{contactsData.counts[index]}</span>
-              </div>
-            )}
+      <div className="flex-1 min-h-0 relative flex">
+        <div className="flex-1 overflow-y-auto no-scrollbar scroll-smooth">
+          <GroupedVirtuoso
+            ref={virtuosoRef}
+            style={{ height: '100%' }}
+            data={contactsData.list}
+            groupCounts={contactsData.counts}
+            groupContent={(index) => (
+                <div className="bg-muted/80 backdrop-blur-sm px-6 py-2 text-[10px] font-bold text-primary uppercase tracking-widest border-b sticky top-0 z-[5] flex items-center justify-between">
+                  <span>{contactsData.groupLetters[index]}</span>
+                  <span className="bg-primary/10 px-2 py-0.5 rounded-full text-[9px]">{contactsData.counts[index]}</span>
+                </div>
+              )}
             components={{
               EmptyPlaceholder: () => (
                 <div className="flex flex-col items-center justify-center p-12 text-center">
@@ -680,6 +723,22 @@ export function ContactList({ onClose }: ContactListProps) {
               </div>
             )}
           />
+        </div>
+
+        {/* Alphabet Index Sidebar */}
+        {!searchQuery && contactsData.groupLetters.length > 0 && (
+          <div className="w-6 flex flex-col items-center justify-center py-4 gap-0.5 bg-background/50 border-r text-[9px] font-black pointer-events-auto">
+            {contactsData.groupLetters.map((letter) => (
+              <button
+                key={letter}
+                onClick={() => scrollToGroup(letter)}
+                className="w-4 h-4 flex items-center justify-center rounded-full hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+              >
+                {letter}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <Dialog open={!!confirmingContact} onOpenChange={(open) => !open && setConfirmingContact(null)}>

@@ -29,6 +29,8 @@ import {
   History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { format } from 'date-fns';
+import { ar } from 'date-fns/locale';
 import { getNameColorClass, isMagicColor } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useStore } from '@/store/useStore';
@@ -62,11 +64,12 @@ const MAGIC_COLORS = [
   { name: 'فسفوري متحرك 🕯️', value: 'magic_phosphor_moving' }
 ];
 
-type UserTab = 'all' | 'banned' | 'kicked' | 'deleted';
+type UserTab = 'all' | 'banned' | 'kicked' | 'deleted' | 'purchases';
 
 export function DeveloperPanel({ onClose }: DeveloperPanelProps) {
   const { quotaExceeded } = useStore();
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -110,6 +113,14 @@ export function DeveloperPanel({ onClose }: DeveloperPanelProps) {
     }
     setLoading(true);
     try {
+      if (activeTab === 'purchases') {
+        const q = query(collection(db, 'purchase_requests'), orderBy('createdAt', 'desc'), limit(50));
+        const snapshot = await getDocs(q);
+        setPurchaseRequests(snapshot.docs.map(d => ({ ...(d.data() as any), id: d.id })));
+        setLoading(false);
+        return;
+      }
+
       let q;
       if (activeTab === 'banned') q = query(collection(db, 'users'), where('isBanned', '==', true), limit(50));
       else if (activeTab === 'deleted') q = query(collection(db, 'users'), where('isDeleted', '==', true), limit(50));
@@ -384,6 +395,7 @@ export function DeveloperPanel({ onClose }: DeveloperPanelProps) {
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
           {[
             { id: 'all', label: 'الكل', icon: Users },
+            { id: 'purchases', label: 'طلبات الشراء', icon: CreditCard },
             { id: 'banned', label: 'المحذورين', icon: Ban },
             { id: 'kicked', label: 'المطرودين', icon: LogOut },
             { id: 'deleted', label: 'المحذوفين', icon: UserX }
@@ -419,6 +431,88 @@ export function DeveloperPanel({ onClose }: DeveloperPanelProps) {
               <Loader2 className="w-12 h-12 text-primary animate-spin" />
               <p className="text-muted-foreground font-black">جاري الاستعلام...</p>
             </div>
+          ) : activeTab === 'purchases' ? (
+            purchaseRequests.length > 0 ? (
+              purchaseRequests.map(req => (
+                <div key={req.id} className="col-span-full p-6 rounded-[2.5rem] bg-zinc-900/60 border border-white/5 space-y-4 hover:border-primary/20 transition-all">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <CreditCard className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="font-black text-white text-lg">{req.userDisplayName}</h3>
+                        <p className="text-xs text-muted-foreground">@{req.username} | {req.userPhoneNumber}</p>
+                      </div>
+                    </div>
+                    <div className="bg-amber-500/10 text-amber-500 text-[10px] font-black px-3 py-1 rounded-full border border-amber-500/20 uppercase">
+                      {req.status === 'pending' ? 'قيد الانتظار' : 'تمت المعالجة'}
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 text-sm font-bold bg-white/5 p-4 rounded-2xl">
+                    <div className="space-y-1">
+                      <p className="text-muted-foreground text-[10px]">اللون المطلوب</p>
+                      <p className="text-white">{req.colorName}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-muted-foreground text-[10px]">طريقة الدفع</p>
+                      <p className="text-white">{req.method}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-muted-foreground text-[10px]">الباقة</p>
+                      <p className="text-white">{req.plan} {req.price && `(${req.price})`}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-muted-foreground text-[10px]">التاريخ</p>
+                      <p className="text-white">{req.createdAt?.toDate ? format(req.createdAt.toDate(), 'yyyy/MM/dd HH:mm') : '...'}</p>
+                    </div>
+                  </div>
+
+                  {req.screenshotUrl && (
+                    <div className="space-y-2">
+                       <p className="text-xs font-black text-muted-foreground px-2">وصل التحويل (سكرين شاشة):</p>
+                       <img 
+                         src={req.screenshotUrl} 
+                         alt="Screenshot" 
+                         className="w-full h-auto max-h-80 object-contain rounded-2xl border border-white/5 bg-black/40 cursor-zoom-in"
+                         onClick={() => window.open(req.screenshotUrl, '_blank')}
+                         referrerPolicy="no-referrer"
+                       />
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="default" 
+                      className="flex-1 h-12 rounded-2xl purple-gradient font-black shadow-lg"
+                      onClick={() => {
+                        setSelectedUserForActions({ uid: req.userId, displayName: req.userDisplayName } as any);
+                      }}
+                    >
+                      تفعيل لهذا المستخدم
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      className="h-12 w-12 rounded-2xl border-white/10 hover:bg-red-500/10 hover:text-red-500 transition-all"
+                      onClick={async () => {
+                         if (confirm('هل أنت متأكد من حذف هذا الطلب؟')) {
+                            await updateDoc(doc(db, 'purchase_requests', req.id), { status: 'deleted' });
+                            setPurchaseRequests(prev => prev.filter(r => r.id !== req.id));
+                         }
+                      }}
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </Button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="col-span-full py-20 text-center space-y-4">
+                 <CreditCard className="w-16 h-16 text-muted-foreground/20 mx-auto" />
+                 <p className="text-muted-foreground font-black">لا توجد طلبات شراء حالية</p>
+              </div>
+            )
           ) : (
             users.map(u => (
               <motion.div 

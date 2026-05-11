@@ -6,7 +6,7 @@ import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { ArrowRight, Camera, Check, Loader2, Lock, Plus, Trash2, Play, MessageSquare, User, BadgeCheck, UserPlus, UserMinus, Palette, LogOut, LayoutDashboard, CreditCard, Smartphone, ShoppingBag } from 'lucide-react';
+import { ArrowRight, Camera, Check, Loader2, Lock, Plus, Trash2, Play, MessageSquare, User, BadgeCheck, UserPlus, UserMinus, Palette, LogOut, LayoutDashboard, CreditCard, Smartphone, ShoppingBag, ShieldAlert } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion, AnimatePresence } from 'motion/react';
@@ -15,6 +15,7 @@ import { ar } from 'date-fns/locale';
 
 import { useStore } from '@/store/useStore';
 import { getNameColorClass, isMagicColor } from '@/lib/utils';
+import { DEV_EMAILS, DEV_USERNAMES, SUPPORT_UID, SUPPORT_NAME } from '@/constants';
 
 export function Profile() {
   const { profile, setProfile, setShowProfile, setShowSettings, setCurrentTab, viewingProfileId, setViewingProfileId, setActiveChatId, language, setQuotaExceeded, quotaExceeded, setShowUserDashboard } = useStore();
@@ -88,100 +89,240 @@ export function Profile() {
 
     setIsSubmittingPurchase(true);
     try {
+      if (quotaExceeded) {
+        alert('⚠️ الحصة اليومية للرسائل استنفدت. يرجى المحاولة غداً أو التواصل مع المطور.');
+        setIsSubmittingPurchase(false);
+        return;
+      }
       if (!profile?.uid) return;
       
-      const supportUid = 'teleiraq-system';
-      
-      // 2. Find or create chat with the support account
-      const chatsRef = collection(db, 'chats');
-      const qChat = query(
-        chatsRef,
-        where('participants', 'array-contains', profile.uid)
-      );
-      const chatSnap = await getDocs(qChat);
-      const existingChat = chatSnap.docs.find(d => {
-        const data = d.data();
-        return !data.isGroup && Array.isArray(data.participants) && data.participants.includes(supportUid) && data.participants.length === 2;
-      });
-      
-      let chatId: string;
-      
-      const participantProfiles = {
-        [profile.uid]: {
-          displayName: profile.displayName || 'مستخدم',
-          photoURL: profile.photoURL || '',
-          nameColor: profile.nameColor || '',
-          isVerified: !!profile.isVerified,
-          phoneNumber: profile.phoneNumber || ''
-        },
-        [supportUid]: {
-          displayName: 'تلي عراق - الدعم الفني',
-          photoURL: '/logo.png',
-          nameColor: '#8b5cf6',
-          isVerified: true,
-          isSystem: true
-        }
+      let targetDevUid = 'teleiraq-system';
+      let targetDevProfile: any = {
+        displayName: 'تلي عراق - الدعم الفني',
+        photoURL: '/logo.png',
+        nameColor: '#8b5cf6',
+        isVerified: true,
+        isSystem: true
       };
 
-      if (!existingChat) {
-        const sortedParticipants = [profile.uid, supportUid].sort();
-        chatId = sortedParticipants.join('_');
+      // 1. Find the developer account efficiently
+      try {
+        // Use constants for developer identification
+        const devEmails = DEV_EMAILS;
+        const devUsernames = DEV_USERNAMES;
         
-        await setDoc(doc(db, 'chats', chatId), {
+        let foundDev = false;
+        
+        // Strategy A: Check hardcoded emails first (highest priority for ISOFIQ)
+        for (const email of devEmails) {
+          if (email === profile.email) continue; 
+          const q = query(collection(db, 'users'), where('email', '==', email), limit(1));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            const devDoc = snap.docs[0];
+            targetDevUid = devDoc.id;
+            const data = devDoc.data();
+            targetDevProfile = {
+              displayName: data.displayName || (email === 'isofiq@teleiraq.app' ? 'المطور الرئيسي ISOFIQ' : 'المطور الرئيسي'),
+              photoURL: data.photoURL || '',
+              nameColor: data.nameColor || '#8b5cf6',
+              isVerified: true,
+              isSystem: false,
+              username: data.username || ''
+            };
+            foundDev = true;
+            break;
+          }
+        }
+
+        // Strategy B: Check by common developer usernames
+        if (!foundDev) {
+          for (const username of devUsernames) {
+            const q = query(collection(db, 'users'), where('username', '==', username), limit(1));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+              const devDoc = snap.docs[0];
+              targetDevUid = devDoc.id;
+              const data = devDoc.data();
+              targetDevProfile = {
+                displayName: data.displayName || 'ISOFIQ',
+                photoURL: data.photoURL || '',
+                nameColor: data.nameColor || '#8b5cf6',
+                isVerified: true,
+                isSystem: false,
+                username: data.username || ''
+              };
+              foundDev = true;
+              break;
+            }
+          }
+        }
+
+        // Strategy B: General developer search if hardcoded failed
+        if (!foundDev) {
+          const qDev = query(collection(db, 'users'), where('isDeveloper', '==', true), limit(5));
+          const snapshot = await getDocs(qDev);
+          const devDoc = snapshot.docs.find(d => d.id !== profile.uid);
+          if (devDoc) {
+            targetDevUid = devDoc.id;
+            const data = devDoc.data();
+            targetDevProfile = {
+              displayName: data.displayName || 'المطور',
+              photoURL: data.photoURL || '',
+              nameColor: data.nameColor || '#8b5cf6',
+              isVerified: true,
+              isSystem: false,
+              username: data.username || ''
+            };
+            foundDev = true;
+          }
+        }
+      } catch (devError) {
+        console.error("Error finding developer account:", devError);
+      }
+
+      const supportUid = targetDevUid;
+      const sortedParticipants = [profile.uid, supportUid].sort();
+      const predictedChatId = sortedParticipants.join('_');
+      
+      // 2. Efficiently check for existing chat using predicted ID first
+      let chatId = predictedChatId;
+      let chatExists = false;
+      
+      try {
+        const chatDocSnap = await getDoc(doc(db, 'chats', predictedChatId));
+        if (chatDocSnap.exists()) {
+          chatExists = true;
+        } else {
+          // Fallback check if it was created with a random ID previously
+          const qChat = query(
+            collection(db, 'chats'),
+            where('participants', 'array-contains', profile.uid)
+          );
+          const chatSnap = await getDocs(qChat);
+          const existingChat = chatSnap.docs.find(d => {
+            const data = d.data();
+            return !data.isGroup && Array.isArray(data.participants) && data.participants.includes(supportUid) && data.participants.length === 2;
+          });
+          if (existingChat) {
+            chatId = existingChat.id;
+            chatExists = true;
+          }
+        }
+      } catch (chatLookupError) {
+        console.error("Chat lookup error:", chatLookupError);
+      }
+      
+      // 3. Send messages manually or via batch? Let's use a single batch for everything
+      const colorFound = MAGIC_COLORS_FOR_PURCHASE.find(c => c.value === selectedColorToBuy);
+      const colorName = colorFound?.name || selectedColorToBuy || 'غير محدد';
+      const methodName = purchaseMethod === 'zain' ? 'زين كاش' : purchaseMethod === 'qi' ? 'الكي كارد' : 'رصيد آسيا سيل';
+      const planInfo = selectedPlan ? `\nالباقة: ${selectedPlan.name} (${selectedPlan.price})` : (selectedColorToBuy ? '\nالباقة: شراء دائم' : '');
+      const messageText = `📦 طلب تفعيل لون سحري (${methodName})${planInfo}\nاللون المطلوب: ${colorName}\nالاسم: ${profile.displayName || 'مستخدم'}\nالمعرف: @${(profile as any).username || 'بدون معرف'}\nالرقم: ${profile.phoneNumber || 'N/A'}\nUID: ${profile.uid}`;
+
+      const batch = writeBatch(db);
+      const purchaseMsgRef = doc(collection(db, 'chats', chatId, 'messages'));
+      const requestRef = doc(collection(db, 'purchase_requests'));
+
+      // 3.1 Initial Chat setup/update inside the batch to avoid redundancy
+      if (!chatExists) {
+        batch.set(doc(db, 'chats', chatId), {
           participants: sortedParticipants,
-          participantProfiles,
           updatedAt: serverTimestamp(),
           lastMessage: {
-            text: 'بدأت محادثة جديدة',
+            text: '📦 طلب تفعيل لون سحري جديد',
             senderId: profile.uid,
             createdAt: serverTimestamp()
+          },
+          participantProfiles: {
+            [profile.uid]: {
+              displayName: profile.displayName || 'مستخدم',
+              photoURL: profile.photoURL || '',
+              nameColor: profile.nameColor || '',
+              isVerified: !!profile.isVerified,
+              phoneNumber: profile.phoneNumber || '',
+              specialColorExpiry: profile.specialColorExpiry || null
+            },
+            [supportUid]: targetDevProfile
           }
         });
       } else {
-        chatId = existingChat.id;
+        batch.update(doc(db, 'chats', chatId), {
+          updatedAt: serverTimestamp(),
+          lastMessage: {
+            text: '📦 طلب تفعيل لون سحري جديد',
+            senderId: profile.uid,
+            createdAt: serverTimestamp()
+          },
+          [`participantProfiles.${profile.uid}`]: {
+            displayName: profile.displayName || 'مستخدم',
+            photoURL: profile.photoURL || '',
+            nameColor: profile.nameColor || '',
+            isVerified: !!profile.isVerified,
+            phoneNumber: profile.phoneNumber || '',
+            specialColorExpiry: profile.specialColorExpiry || null
+          },
+          [`participantProfiles.${supportUid}`]: targetDevProfile
+        });
       }
-      
-      // 3. Send the message with screenshot details
-      const colorName = MAGIC_COLORS_FOR_PURCHASE.find(c => c.value === selectedColorToBuy)?.name || 'غير محدد';
-      const methodName = purchaseMethod === 'zain' ? 'زين كاش' : purchaseMethod === 'qi' ? 'الكي كارد' : 'رصيد آسيا سيل';
-      const planInfo = selectedPlan ? `\nالباقة: ${selectedPlan.name} (${selectedPlan.price})` : '';
 
-      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+      // 3.2 Purchase message with info and screenshot
+      batch.set(purchaseMsgRef, {
         chatId: chatId,
-        text: `📦 طلب تفعيل لون سحري (${methodName})${planInfo}\nاللون المطلوب: ${colorName}\nالاسم: ${profile.displayName}\nالمعرف: @${(profile as any).username || 'N/A'}\nالرقم: ${profile.phoneNumber || 'N/A'}\nUID: ${profile.uid}`,
+        text: messageText,
         type: 'purchase_notice',
         senderId: profile.uid,
+        fileUrl: purchaseScreenshot || undefined,
+        createdAt: serverTimestamp(),
+        colorName,
+        method: methodName,
+        plan: selectedPlan?.name || 'تفعيل دائم'
+      });
+      
+      // 4. Store in dedicated collection for management
+      const purchaseReqId = requestRef.id;
+      batch.set(requestRef, {
+        id: purchaseReqId,
+        userId: profile.uid,
+        userDisplayName: profile.displayName || 'مستخدم',
+        username: (profile as any).username || '',
+        userPhoneNumber: profile.phoneNumber || '',
+        colorValue: selectedColorToBuy,
+        colorName: colorName,
+        method: methodName,
+        plan: selectedPlan ? selectedPlan.name : 'one_time',
+        price: selectedPlan ? selectedPlan.price : '',
+        screenshotUrl: purchaseScreenshot,
+        text: messageText, 
+        status: 'pending',
         createdAt: serverTimestamp()
       });
 
-      // Send the screenshot as a separate message (image message)
-      await addDoc(collection(db, 'chats', chatId, 'messages'), {
-        chatId: chatId,
-        text: '📸 سكرين شاشة توثيق الشراء',
-        fileUrl: purchaseScreenshot,
-        senderId: profile.uid,
-        createdAt: serverTimestamp(),
-        type: 'image'
-      });
-      
-      // Update chat last message
-      await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: {
-          text: '✅ تم إرسال طلب شراء الألوان',
-          senderId: profile.uid,
-          createdAt: serverTimestamp()
-        },
-        updatedAt: serverTimestamp()
-      });
+      await batch.commit();
 
-      alert('✅ تم إرسال طلبك بنجاح إلى ISOFIQ. سيتم التفعيل قريباً!');
+
+      // 6. Notify Developers via specialized collection
+      try {
+        await addDoc(collection(db, 'purchase_notifications'), {
+          userId: profile.uid,
+          userDisplayName: profile.displayName || 'مستخدم',
+          type: 'purchase',
+          colorName,
+          methodName,
+          createdAt: serverTimestamp()
+        });
+      } catch (notifyErr) {
+        console.error('Error sending notification:', notifyErr);
+      }
+
+      alert(`✅ تم إرسال طلبك بنجاح. سيتم التفعيل قريباً من قبل فريق الدعم!`);
       setShowPurchaseDialog(false);
       setPurchaseMethod('list');
       setPurchaseScreenshot(null);
       setSelectedColorToBuy(null);
     } catch (err) {
       console.error("Purchase submission error:", err);
-      alert('❌ فشل إرسال الطلب. يرجى المحاولة مرة أخرى أو التواصل عبر الواتساب.');
+      alert('❌ فشل إرسال الطلب. يرجى المحاولة مرة أخرى.');
     } finally {
       setIsSubmittingPurchase(false);
     }
@@ -292,6 +433,16 @@ export function Profile() {
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const isDeveloperUser = currentProfile?.isDeveloper === true || 
+                          currentProfile?.isDeveloperAdmin === true ||
+                          (currentProfile?.email && DEV_EMAILS.includes(currentProfile.email)) ||
+                          (currentProfile?.username && DEV_USERNAMES.includes(currentProfile.username));
+
+  const isMeAdmin = profile?.isDeveloper === true || 
+                    profile?.isDeveloperAdmin === true ||
+                    (profile?.email && DEV_EMAILS.includes(profile.email)) ||
+                    (profile?.username && DEV_USERNAMES.includes(profile.username));
+
   const formatLastSeen = (p: UserProfile | null) => {
     if (!p) return 'متصل منذ وقت طويل';
     
@@ -346,13 +497,23 @@ export function Profile() {
   if (!currentProfile) return null;
 
   const propagateProfileUpdate = async (userData: Partial<UserProfile>) => {
-    if (!profile?.uid) return;
+    if (!profile?.uid || useStore.getState().quotaExceeded) return;
+    
+    // Throttling: Only propagate every 5 minutes to save writes
+    const lastUpdateKey = `lastPropagate_${profile.uid}`;
+    const lastUpdate = parseInt(localStorage.getItem(lastUpdateKey) || '0');
+    if (Date.now() - lastUpdate < 300000) {
+      console.log("Profile propagation throttled");
+      return;
+    }
+
     try {
+      localStorage.setItem(lastUpdateKey, Date.now().toString());
       const chatsQ = query(
         collection(db, 'chats'), 
         where('participants', 'array-contains', profile.uid),
         orderBy('updatedAt', 'desc'),
-        limit(20)
+        limit(8)
       );
       const chatsSnap = await getDocs(chatsQ);
       const batch = writeBatch(db);
@@ -521,29 +682,34 @@ export function Profile() {
 
   return (
     <div className="flex flex-col h-full bg-background overflow-y-auto no-scrollbar scroll-smooth" dir="rtl">
-      {/* Immersive Header (Telegram Style) */}
+      {/* Immersive Header (Modern Aesthetic with Blue/Purple Gradients) */}
       <div className="relative h-80 shrink-0 overflow-hidden">
-        <div className="absolute inset-0 bg-zinc-950">
-          <img 
-            src={photoURL || 'https://picsum.photos/seed/profile/1080/1920'} 
-            className="w-full h-full object-cover opacity-60 blur-[2px]" 
-            alt="Profile Background"
-            referrerPolicy="no-referrer"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-black/30" />
+        <div className="absolute inset-0 bg-slate-950">
+          {photoURL ? (
+            <img 
+              src={photoURL} 
+              className="w-full h-full object-cover opacity-40 scale-110 blur-md transition-all duration-700" 
+              alt="Profile Background Shadow"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-full h-full bg-gradient-to-br from-blue-900 via-indigo-900 to-purple-900 animate-gradient" />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-indigo-950/60 to-transparent" />
+          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] opacity-30" />
         </div>
         
         <div className="absolute top-0 inset-x-0 p-4 flex items-center justify-between z-10 text-white safe-top">
-          <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full hover:bg-white/10 ios-touch">
+          <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full hover:bg-white/10 backdrop-blur-md ios-touch">
             <ArrowRight className={`h-6 w-6 ${language === 'English' ? 'rotate-180' : ''}`} />
           </Button>
           <div className="flex gap-2">
             {isMe && (
               <>
-                <Button variant="ghost" size="icon" className="rounded-full hover:bg-white/10 ios-touch" onClick={() => document.getElementById('avatar-upload')?.click()}>
+                <Button variant="ghost" size="icon" className="rounded-full hover:bg-white/10 backdrop-blur-md ios-touch" onClick={() => document.getElementById('avatar-upload')?.click()}>
                   <Camera className="h-5 w-5" />
                 </Button>
-                <Button variant="ghost" size="icon" className="rounded-full hover:bg-white/10 ios-touch" onClick={handleSave}>
+                <Button variant="ghost" size="icon" className="rounded-full hover:bg-white/10 backdrop-blur-md ios-touch" onClick={handleSave}>
                   {loading ? <Loader2 className="animate-spin h-5 w-5" /> : <Check className={`h-5 w-5 ${saved ? 'text-green-500' : ''}`} />}
                 </Button>
               </>
@@ -553,8 +719,8 @@ export function Profile() {
                 <Button 
                   variant="ghost" 
                   size="icon" 
-                  className={`rounded-full hover:bg-white/10 backdrop-blur-md ios-touch ${
-                    profile?.friends?.includes(currentProfile.uid) ? 'bg-destructive/20 text-destructive' : 'bg-white/20 text-white'
+                  className={`rounded-full hover:bg-white/10 backdrop-blur-xl ios-touch ${
+                    profile?.friends?.includes(currentProfile.uid) ? 'bg-destructive/20 text-destructive' : 'bg-blue-500/20 text-blue-400'
                   }`}
                   onClick={() => {
                     const isFriend = profile?.friends?.includes(currentProfile.uid);
@@ -569,7 +735,7 @@ export function Profile() {
                 <Button 
                   variant="ghost" 
                   size="icon" 
-                  className="rounded-full hover:bg-white/10 bg-white/20 backdrop-blur-md text-white ios-touch"
+                  className="rounded-full hover:bg-indigo-500/30 bg-indigo-500/20 backdrop-blur-xl text-white ios-touch border border-white/10"
                   onClick={async () => {
                     // Find or create chat logic
                     if(!profile?.uid || !currentProfile?.uid) return;
@@ -613,35 +779,58 @@ export function Profile() {
           </div>
         </div>
 
-        <div className="absolute bottom-6 inset-x-6 flex flex-col items-center text-white text-center">
+        <div className="absolute inset-x-0 bottom-0 p-8 flex flex-col items-center">
           <motion.div 
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className="flex flex-col items-center gap-1"
           >
-            <h1 className={`text-3xl font-bold tracking-tight flex items-center gap-1.5 ${getNameColorClass(nameColor, specialColorExpiry)}`} 
+            <div className="relative group cursor-pointer mb-4">
+              <div className="absolute inset-0 bg-primary/30 rounded-[2.5rem] blur-2xl animate-pulse" />
+              <Avatar className="h-36 w-36 border-4 border-white shadow-[0_20px_50px_rgba(0,0,0,0.3)] rounded-[2.5rem] relative z-10 transition-transform group-hover:scale-105 duration-500">
+                <AvatarImage src={photoURL} className="object-cover" referrerPolicy="no-referrer" />
+                <AvatarFallback className="bg-slate-800 text-5xl font-black text-white">
+                  {(displayName || profile?.displayName || '?')[0].toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              {isMe && (
+                <div className="absolute -bottom-2 -right-2 w-10 h-10 bg-primary rounded-2xl flex items-center justify-center text-white border-4 border-background z-20 shadow-lg" onClick={() => document.getElementById('avatar-upload')?.click()}>
+                  <Camera className="h-5 w-5" />
+                </div>
+              )}
+            </div>
+
+            <h1 className={`text-3xl font-black tracking-tight mb-1 drop-shadow-md flex items-center gap-2 ${getNameColorClass(nameColor, specialColorExpiry)}`} 
               style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : (nameColor || 'white') }}
             >
               {displayName || 'مستخدم تلي عراق'}
               {isVerified ? (
-                <BadgeCheck className="w-6 h-6 text-blue-500 fill-blue-500/10" />
+                <BadgeCheck className="w-7 h-7 text-blue-400 fill-blue-500/20 shadow-xl" />
               ) : null}
-              {isMe && (
-                <div className="flex items-center bg-white/10 px-2 py-0.5 rounded-full">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse mr-1.5" />
-                  <span className="text-[10px] text-white/70 font-bold">نشط الآن</span>
-                </div>
+              {isDeveloperUser && (
+                <ShieldAlert className="w-7 h-7 text-red-500 fill-red-500/20" />
               )}
             </h1>
-            <p className="text-white/60 text-sm font-medium" style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : (nameColor || 'white'), opacity: 0.7 }}>{formatLastSeen(currentProfile)}</p>
+            
+            <div className="flex items-center gap-3 mt-1">
+              <p className="text-white font-bold bg-white/10 backdrop-blur-xl px-4 py-1.5 rounded-full border border-white/10 shadow-lg text-xs" style={{ color: isMagicColor(nameColor, specialColorExpiry) ? undefined : (nameColor || 'white') }}>
+                {formatLastSeen(currentProfile)}
+              </p>
+              {isMe && (
+                <div className="flex items-center bg-green-500/10 backdrop-blur-xl border border-green-500/20 px-4 py-1.5 rounded-full shadow-lg">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse mr-2" />
+                  <span className="text-[10px] text-green-500 font-black uppercase tracking-widest">متصل الآن</span>
+                </div>
+              )}
+            </div>
             {specialColorExpiry && (
               <motion.div 
                 initial={{ opacity: 0, y: 5 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="mt-1 flex items-center gap-1.5 bg-black/20 backdrop-blur-sm px-3 py-0.5 rounded-full border border-white/5"
+                className="mt-2 flex items-center gap-2 bg-amber-500/10 backdrop-blur-xl px-4 py-1.5 rounded-full border border-amber-500/20 shadow-lg"
               >
-                <Palette className="w-3 h-3 text-primary" />
-                <span className="text-[10px] font-black text-white/90 uppercase tracking-tighter">
+                <Palette className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-[10px] font-black text-amber-500 uppercase tracking-tighter">
                   صلاحية اللون: {formatRemainingTime(specialColorExpiry)}
                 </span>
               </motion.div>
@@ -665,15 +854,9 @@ export function Profile() {
               <TabsList className="w-full bg-transparent h-12 gap-0 overflow-x-auto no-scrollbar">
                 <TabsTrigger 
                   value="info" 
-                  className="flex-1 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent h-full font-bold text-xs"
+                  className="w-full rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent h-full font-bold text-xs"
                 >
                   المعلومات
-                </TabsTrigger>
-                <TabsTrigger 
-                  value="appearance" 
-                  className="flex-1 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent h-full font-bold text-xs"
-                >
-                  المظهر
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -766,106 +949,6 @@ export function Profile() {
                     </div>
                   </div>
                 </section>
-              </TabsContent>
-
-              <TabsContent value="appearance" className="m-0 p-6 space-y-8">
-                <div className="space-y-4">
-                  <h3 className="text-lg font-black text-primary text-center">خلفية المحادثة</h3>
-                  <p className="text-xs text-muted-foreground text-center">اختر خلفية مريحة لعينيك أثناء الدردشة</p>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    {defaultBackgrounds.map(bg => (
-                      <button
-                        key={bg.id}
-                        onClick={() => handleBackgroundSelect(bg.value)}
-                        className={`group relative h-24 rounded-2xl overflow-hidden transition-all border-2 ${chatBackground === bg.value ? 'border-primary ring-4 ring-primary/20' : 'border-transparent'}`}
-                      >
-                        <div 
-                          className="absolute inset-0 transition-transform group-hover:scale-110"
-                          style={{ 
-                            background: bg.value.startsWith('linear-gradient') ? bg.value : undefined,
-                            backgroundImage: !bg.value.startsWith('linear-gradient') && bg.value ? `url(${bg.value})` : undefined,
-                            backgroundColor: bg.value ? undefined : '#f4f4f7',
-                            backgroundSize: 'cover'
-                          }}
-                        />
-                        {!bg.value && (
-                          <div className="absolute inset-0 flex items-center justify-center telegram-bg opacity-50" />
-                        )}
-                        <div className="absolute inset-x-0 bottom-0 bg-black/40 backdrop-blur-md py-1">
-                          <span className="text-[10px] font-bold text-white tracking-wider">{bg.name}</span>
-                        </div>
-                      </button>
-                    ))}
-                    
-                    <button
-                      onClick={() => document.getElementById('bg-upload')?.click()}
-                      className="h-24 rounded-2xl border-2 border-dashed border-muted-foreground/30 flex flex-col items-center justify-center gap-2 hover:bg-muted/30 transition-all"
-                    >
-                      <Plus className="w-6 h-6 text-muted-foreground" />
-                      <span className="text-[10px] font-bold text-muted-foreground">رفع صورة خاصة</span>
-                    </button>
-                  </div>
-                  
-                  <input 
-                    id="bg-upload"
-                    type="file" 
-                    className="hidden" 
-                    accept="image/*" 
-                    onChange={handleBackgroundUpload} 
-                  />
-
-                  <div className="pt-4 border-t border-border/40 space-y-4">
-                    <h3 className="text-lg font-black text-primary text-center">ألواني الخاصة</h3>
-                    <p className="text-xs text-muted-foreground text-center">تغيير لون اسمك من قائمة الألوان التي حصلت عليها</p>
-                    <Button 
-                      variant="outline"
-                      onClick={() => setShowMyColorsDialog(true)} 
-                      className="w-full h-14 rounded-2xl bg-purple-500/10 text-purple-500 border-purple-500/20 hover:bg-purple-500/20 font-black shadow-lg shadow-purple-500/5"
-                    >
-                      <Palette className="w-5 h-5 ml-2" />
-                      عرض حقيبة الألوان ✨
-                    </Button>
-                  </div>
-
-                  {chatBackground && !defaultBackgrounds.find(b => b.value === chatBackground) && (
-                    <div className="mt-4 p-4 rounded-3xl bg-primary/5 border border-primary/10 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div 
-                          className="w-12 h-12 rounded-xl shadow-inner border border-primary/20"
-                          style={{ backgroundImage: `url(${chatBackground})`, backgroundSize: 'cover' }}
-                        />
-                        <span className="text-sm font-bold text-primary">خلفيتك المختارة</span>
-                      </div>
-                      <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10" onClick={() => handleBackgroundSelect('')}>
-                        <Trash2 className="w-5 h-5" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-4 pt-4 border-t border-border/40">
-                  <h3 className="text-base font-black text-primary text-center">معاينة الخلفية</h3>
-                  <div 
-                    className="w-full h-40 rounded-3xl overflow-hidden shadow-2xl relative border border-border/20"
-                    style={typeof chatBackground === 'string' && chatBackground ? {
-                      background: (chatBackground.startsWith('linear-gradient') || chatBackground.startsWith('radial-gradient'))
-                        ? chatBackground
-                        : undefined,
-                      backgroundImage: (!chatBackground.startsWith('linear-gradient') && !chatBackground.startsWith('radial-gradient'))
-                        ? `url(${chatBackground})`
-                        : undefined,
-                      backgroundColor: '#f4f4f7',
-                      backgroundSize: 'cover'
-                    } : undefined}
-                  >
-                    {!chatBackground && <div className="absolute inset-0 telegram-bg opacity-30" />}
-                    <div className="absolute inset-0 p-4 flex flex-col justify-end gap-2">
-                      <div className="bg-card w-2/3 p-2 rounded-2xl rounded-bl-none shadow-sm text-[10px]">مرحباً! كيف حالك اليوم؟</div>
-                      <div className="bg-primary text-white w-2/3 p-2 rounded-2xl rounded-br-none shadow-sm self-end text-[10px]">أنا بخير، شكراً لك! هذه الخلفية رائعة جداً 😍</div>
-                    </div>
-                  </div>
-                </div>
               </TabsContent>
             </div>
           </Tabs>
@@ -965,10 +1048,21 @@ export function Profile() {
                 طريقة شراء الألوان السحرية
               </Button>
 
+              {isMe && isMeAdmin && (
+                <Button 
+                  variant="outline"
+                  onClick={() => setShowUserDashboard(true)} 
+                  className="w-full h-14 text-base font-black rounded-2xl transition-all border-orange-500/20 bg-orange-500/10 text-orange-600 hover:bg-orange-500/20 active:scale-[0.95] flex items-center justify-center gap-2 mb-2"
+                >
+                  <ShieldAlert className="h-6 w-6" />
+                  لوحة إدارة المستخدمين (المطور)
+                </Button>
+              )}
+
               <Button 
                 variant="outline"
                 onClick={() => setShowLogoutDialog(true)} 
-                className="w-full h-14 text-base font-bold rounded-2xl transition-all border-destructive/20 text-destructive hover:bg-destructive/10 hover:border-destructive/30 active:scale-[0.95] flex items-center justify-center gap-2"
+                className="w-full h-14 text-base font-bold rounded-2xl transition-all border-destructive/20 text-destructive hover:bg-destructive/10 hover:border-destructive/30 active:scale-[0.95] flex items-center justify-center gap-2 mb-2"
               >
                 <LogOut className="h-5 w-5" />
                 تسجيل الخروج من الحساب

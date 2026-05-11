@@ -18,7 +18,7 @@ import { UserManagementDashboard } from '@/components/UserManagementDashboard';
 import { SystemAlert } from '@/components/SystemAlert';
 import { UserProfile, Chat } from '@/types';
 import { Language, translations } from '@/lib/i18n';
-import { Loader2, AlertCircle, X, MessageSquare, Bell, Users, User as UserIcon, Settings as SettingsIcon, Phone, VideoOff, PhoneOff, Video } from 'lucide-react';
+import { Loader2, AlertCircle, X, MessageSquare, Bell, Users, User as UserIcon, Settings as SettingsIcon, Phone, VideoOff, PhoneOff, Video, AlertTriangle } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 import { motion, AnimatePresence } from 'motion/react';
@@ -156,7 +156,7 @@ export default function App() {
       collection(db, 'chats'),
       where('participants', 'array-contains', user.uid),
       orderBy('updatedAt', 'desc'),
-      limit(30)
+      limit(12)
     );
 
     if (useStore.getState().quotaExceeded) {
@@ -463,8 +463,8 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     
-    let lastPresenceUpdate = 0;
-    const PRESENCE_COOLDOWN = 900000; // 15 minutes cooldown
+    let lastPresenceUpdate = parseInt(localStorage.getItem(`lastPresence_${user?.uid}`) || '0');
+    const PRESENCE_COOLDOWN = 86400000; // 24 hours cooldown for free tier
 
     // Heartbeat for "Last Seen"
     const updatePresence = async () => {
@@ -475,10 +475,11 @@ export default function App() {
         
         try {
           lastPresenceUpdate = now;
-          // Use setDoc with merge: true to avoid "not found" or permission errors if profile doesn't exist yet
-          await setDoc(doc(db, 'users', user.uid), {
+          localStorage.setItem(`lastPresence_${user.uid}`, now.toString());
+          // Use updateDoc instead of setDoc to be more precise for the presence field
+          await updateDoc(doc(db, 'users', user.uid), {
             lastSeen: serverTimestamp()
-          }, { merge: true });
+          });
         } catch (e: any) {
           if (e.code === 'resource-exhausted') {
             setQuotaExceeded(true);
@@ -490,7 +491,7 @@ export default function App() {
     };
 
     updatePresence();
-    const interval = setInterval(updatePresence, 900000); // 15 minutes
+    const interval = setInterval(updatePresence, 86400000); // 24 hours
     
     document.addEventListener('visibilitychange', updatePresence);
     return () => {
@@ -567,6 +568,31 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-background relative touch-pan-y" dir={language === 'English' ? 'ltr' : 'rtl'}>
+      {/* Quota Exceeded Notification Banner */}
+      <AnimatePresence>
+        {quotaExceeded && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-amber-500 text-slate-950 px-4 py-2 flex items-center justify-between text-xs font-black z-[1000] shadow-lg sticky top-0"
+          >
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>تم استنفاد حصة Firestore المجانية. بعض الوظائف (بما في ذلك الرسائل الجديدة) معطلة مؤقتاً حتى يتم تصفير الحصة غداً.</span>
+            </div>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-7 text-[10px] bg-black/10 hover:bg-black/20 text-slate-950 font-bold border border-black/10"
+              onClick={() => setQuotaExceeded(false)}
+            >
+              إخفاء
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Main Content Area */}
       <div className="flex-1 relative overflow-hidden">
         {/* Page 1: Main Tabs (Chats/Contacts) */}

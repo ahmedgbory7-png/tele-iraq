@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '@/firebase';
-import { collection, query, limit, getDocs, doc, getDoc, updateDoc, setDoc, orderBy, where, serverTimestamp, Timestamp, writeBatch, increment, getCountFromServer, addDoc, arrayUnion } from 'firebase/firestore';
+import { collection, query, limit, getDocs, doc, getDoc, updateDoc, setDoc, orderBy, where, serverTimestamp, Timestamp, writeBatch, increment, getCountFromServer, addDoc, arrayUnion, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,12 +28,19 @@ import {
   Calendar,
   MapPin,
   CreditCard,
-  History
+  History,
+  ShoppingBag,
+  Smartphone,
+  Plus,
+  BadgeCheck,
+  Trophy,
+  Bot
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getNameColorClass, isMagicColor } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useStore } from '@/store/useStore';
+import { SUPPORT_UID, SUPPORT_NAME } from '@/constants';
 
 interface UserManagementDashboardProps {
   onClose: () => void;
@@ -70,7 +77,13 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'all' | 'banned' | 'vip' | 'admins'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'banned' | 'vip' | 'admins' | 'requests' | 'broadcast' | 'stats' | 'settings'>('all');
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [systemSettings, setSystemSettings] = useState({ maintenance: false, disableGames: false });
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
+  const [isRequestsLoading, setIsRequestsLoading] = useState(false);
   const [stats, setStats] = useState({ total: 0, banned: 0, vip: 0 });
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -105,19 +118,18 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
   const fetchStats = async () => {
     if (quotaExceeded) return;
     
-    // Cache check: only fetch if not fetched in the last 10 minutes
+    // Cache check: only fetch if not fetched in the last 5 minutes
     const state = useStore.getState();
-    if (state.cachedStats && (Date.now() - state.lastStatsFetch < 600000)) {
+    if (state.cachedStats && (Date.now() - (state.lastStatsFetch || 0) < 300000)) {
       setStats(state.cachedStats);
       return;
     }
 
     try {
       const coll = collection(db, 'users');
-      
-      const totalCount = await getCountFromServer(query(coll, limit(1000)));
-      const bannedCount = await getCountFromServer(query(coll, where('isBanned', '==', true), limit(1000)));
-      const vipCount = await getCountFromServer(query(coll, where('specialColor', '!=', null), limit(1000)));
+      const totalCount = await getCountFromServer(query(coll));
+      const bannedCount = await getCountFromServer(query(coll, where('isBanned', '==', true)));
+      const vipCount = await getCountFromServer(query(coll, where('specialColor', '!=', null)));
 
       const newStats = {
         total: totalCount.data().count,
@@ -126,10 +138,14 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
       };
       
       setStats(newStats);
-      (state as any).setCachedStats(newStats);
+      if ((state as any).setCachedStats) {
+        (state as any).setCachedStats(newStats);
+      }
     } catch (e: any) {
       console.error("Fetch stats error:", e);
-      if (e.code === 'resource-exhausted' || e.message?.includes('quota')) setQuotaExceeded(true);
+      if (e.code === 'resource-exhausted' || e.message?.includes('quota')) {
+        setQuotaExceeded(true);
+      }
     }
   };
 
@@ -156,6 +172,21 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
     }
   };
 
+  const fetchRequests = async () => {
+    if (quotaExceeded) return;
+    setIsRequestsLoading(true);
+    try {
+      const q = query(collection(db, 'purchase_requests'), orderBy('createdAt', 'desc'), limit(50));
+      const snapshot = await getDocs(q);
+      setPurchaseRequests(snapshot.docs.map(d => ({ ...d.data(), id: d.id })));
+    } catch (error: any) {
+      console.error("Fetch requests error:", error);
+      if (error.code === 'resource-exhausted') setQuotaExceeded(true);
+    } finally {
+      setIsRequestsLoading(false);
+    }
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchTerm);
@@ -166,13 +197,54 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
   useEffect(() => {
     if (debouncedSearch.trim()) {
       handleSearch();
+    } else if (activeTab === 'requests') {
+      fetchRequests();
     } else {
       fetchUsers();
     }
   }, [debouncedSearch, activeTab]);
 
-  useEffect(() => {
+   useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const docSnap = await getDoc(doc(db, 'system', 'settings'));
+        if (docSnap.exists()) {
+          setSystemSettings(docSnap.data() as any);
+        }
+      } catch (e) {}
+    };
+    fetchSettings();
     fetchStats();
+
+    // Purchase Notifications Listener for Admins
+    const qNotif = query(
+      collection(db, 'purchase_notifications'), 
+      orderBy('createdAt', 'desc'), 
+      limit(1)
+    );
+    
+    let isInitialLoad = true;
+    const unsubscribeNotif = onSnapshot(qNotif, (snapshot) => {
+      if (isInitialLoad) {
+        isInitialLoad = false;
+        return;
+      }
+      
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          if (data.createdAt) {
+            showToast(`🔔 طلب شراء جديد: ${data.userDisplayName}`);
+            // Notification sound
+            try { new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3').play().catch(() => {}); } catch(e) {}
+            fetchRequests(); 
+            fetchStats();
+          }
+        }
+      });
+    });
+
+    return () => unsubscribeNotif();
   }, []);
 
   const handleSearch = async () => {
@@ -380,7 +452,7 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
 
   const sendSupportMessage = async (targetUid: string, text: string) => {
     try {
-      const supportUid = 'teleiraq-system';
+      const supportUid = SUPPORT_UID;
       const participants = [supportUid, targetUid].sort();
       const deterministicChatId = participants.join('_');
       
@@ -429,9 +501,9 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
           unreadCount: { [targetUid]: 1, [supportUid]: 0 },
           participantProfiles: {
             [supportUid]: {
-              displayName: 'تلي عراق - الدعم الفني',
-              photoURL: '/logo.png',
-              nameColor: '#8b5cf6',
+              displayName: SUPPORT_NAME,
+              photoURL: 'https://cdn-icons-png.flaticon.com/512/4712/4712035.png',
+              nameColor: 'magic_rb',
               isVerified: true,
               isSystem: true
             },
@@ -549,9 +621,13 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
 
             <div className="flex gap-2 overflow-x-auto no-scrollbar scroll-smooth">
               {[
-                { id: 'all', label: 'الكل', icon: Users },
-                { id: 'vip', label: 'المميزين (VIP)', icon: Star },
-                { id: 'banned', label: 'المحظورين', icon: Ban },
+                { id: 'all', label: 'المستخدمين', icon: Users },
+                { id: 'requests', label: 'طلبات الشراء', icon: ShoppingBag, color: 'text-amber-500' },
+                { id: 'broadcast', label: 'إذاعة رسالة 📢', icon: Bot, color: 'text-purple-500' },
+                { id: 'stats', label: 'إحصائيات النظام 📊', icon: LayoutDashboard, color: 'text-blue-500' },
+                { id: 'settings', label: 'إعدادات النظام ⚙️', icon: ShieldAlert, color: 'text-red-500' },
+                { id: 'vip', label: 'VIP', icon: Star },
+                { id: 'banned', label: 'الحظر', icon: Ban },
                 { id: 'admins', label: 'فريق العمل', icon: ShieldCheck }
               ].map(tab => (
                 <Button
@@ -560,8 +636,13 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
                   className={`h-11 rounded-2xl px-6 font-black shrink-0 transition-all ${activeTab === tab.id ? 'bg-primary border-none shadow-lg' : 'bg-transparent border-white/10 text-muted-foreground hover:text-white'}`}
                   onClick={() => setActiveTab(tab.id as any)}
                 >
-                  <tab.icon className="w-4 h-4 ml-2" />
+                  <tab.icon className={`w-4 h-4 ml-2 ${(tab as any).color || ''}`} />
                   {tab.label}
+                  {tab.id === 'requests' && purchaseRequests.length > 0 && (
+                    <span className="mr-2 px-1.5 py-0.5 rounded-full bg-amber-500 text-black text-[9px] font-black animate-pulse">
+                      {purchaseRequests.length}
+                    </span>
+                  )}
                 </Button>
               ))}
             </div>
@@ -569,98 +650,400 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
 
           {/* User List Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {loading ? (
-              <div className="col-span-full py-40 flex flex-col items-center gap-4">
-                <Loader2 className="w-12 h-12 text-primary animate-spin" />
-                <p className="text-muted-foreground font-black animate-pulse">جاري فحص قاعدة البيانات...</p>
-              </div>
-            ) : users.length === 0 ? (
-              <div className="col-span-full py-40 text-center bg-zinc-900/20 border border-dashed border-white/5 rounded-[3rem]">
-                <ShieldAlert className="w-16 h-16 text-muted/20 mx-auto mb-4" />
-                <p className="text-muted-foreground font-black italic">لا يوجد شيء هنا للمسح الضوئي</p>
-              </div>
-            ) : (
-              users.map(u => (
+            {activeTab === 'broadcast' ? (
+              <div className="col-span-full">
                 <motion.div 
-                  layout
-                  key={u.uid}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="p-6 rounded-[2.5rem] bg-zinc-900/60 border border-white/5 hover:border-primary/20 transition-all flex flex-col gap-5 relative overflow-hidden group shadow-xl"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-8 rounded-[3rem] bg-zinc-900/60 border border-purple-500/20 space-y-6"
                 >
                   <div className="flex items-center gap-4">
-                    <Avatar className="h-16 w-16 border-2 border-white/5 shadow-2xl">
-                      <AvatarImage src={u.photoURL} />
-                      <AvatarFallback style={{ backgroundColor: u.nameColor }} className="text-white text-xl font-black">
-                        {u.displayName?.slice(0,2) || ''}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <h3 className={`text-lg font-black truncate ${getNameColorClass(u.specialColor || u.nameColor, u.specialColorExpiry)}`}>
-                        {u.displayName}
-                      </h3>
-                      <p className="text-[10px] text-muted-foreground font-mono opacity-50 truncate">{u.uid}</p>
-                      <div className="flex gap-2 mt-1">
-                        {u.isVerified && <div className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/20"><Star className="w-2.5 h-2.5 text-blue-500 fill-blue-500" /></div>}
-                        {u.isBanned && <span className="text-[8px] font-black bg-red-500/10 text-red-500 px-2 py-0.5 rounded-full border border-red-500/20">BANNED</span>}
-                      </div>
+                    <div className="w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-500">
+                      <Bot className="w-8 h-8" />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-black text-white">إذاعة رسالة جماعية 📢</h3>
+                      <p className="text-sm text-muted-foreground font-bold">سيتم إرسال هذه الرسالة إلى جميع المستخدمين النشطين عبر الدعم الفني.</p>
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap gap-2">
-                     <p className="text-[10px] bg-white/5 text-muted-foreground px-3 py-1 rounded-full font-bold">{u.phoneNumber || 'لا يوجد رقم'}</p>
-                     <p className="text-[10px] bg-primary/10 text-primary px-3 py-1 rounded-full font-bold">Role: {u.isDeveloper ? 'Admin' : 'User'}</p>
-                     {u.specialColor && (
-                       <p className={`text-[10px] px-3 py-1 rounded-full font-black border ${formatRemainingTime(u.specialColorExpiry) === 'منتهي الصلاحية' ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-primary/10 border-primary/20 text-primary'}`}>
-                         {formatRemainingTime(u.specialColorExpiry) || 'تاريخ غير محدد'}
-                       </p>
-                     )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <Button 
-                      variant="outline" 
-                      className="h-10 rounded-xl text-[10px] font-black border-white/5 hover:bg-zinc-800 transition-all text-white flex items-center justify-center gap-1.5 col-span-2"
-                      onClick={() => setAccountInfoUser(u)}
-                    >
-                      <Info className="w-3.5 h-3.5" />
-                      معلومات الحساب
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      className={`h-10 rounded-xl text-[10px] font-black border-white/10 bg-primary/20 text-primary hover:bg-primary/30 flex items-center justify-center gap-1.5 transition-all shadow-sm ${u.specialColor ? 'ring-2 ring-primary ring-offset-2 ring-offset-zinc-950' : ''}`}
-                      onClick={() => {
-                        setSelectedUserForColor({ uid: u.uid, color: '' });
-                        setExpiryDialogOpen(true);
-                      }}
-                    >
-                      <Palette className="w-3.5 h-3.5" />
-                      {u.specialColor ? 'تعديل اللون ✨' : 'منح لون سحري ✨'}
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      className="h-10 rounded-xl text-[10px] font-black border-white/5 hover:bg-zinc-800 transition-all text-white"
-                      onClick={() => setSelectedUser(u)}
-                    >
-                      إدارة الحساب
-                    </Button>
-                    <Button 
-                      variant={u.isBanned ? 'destructive' : 'outline'} 
-                      className={`h-10 rounded-xl text-[10px] font-black transition-all col-span-2 ${!u.isBanned ? 'border-red-500/10 text-red-500 bg-red-500/5 hover:bg-red-500/20' : ''}`}
-                      onClick={() => handleAction(u.uid, { isBanned: !u.isBanned })}
-                      disabled={u.isDeveloper}
-                    >
-                      {u.isBanned ? 'إلغاء الحظر' : 'حظر الحساب'}
-                    </Button>
+                  <div className="space-y-4">
+                    <textarea 
+                      value={broadcastMessage}
+                      onChange={(e) => setBroadcastMessage(e.target.value)}
+                      placeholder="اكتب هنا ما تريد إعلانه لجميع مستخدمي تلي عراق..."
+                      className="w-full h-40 rounded-3xl bg-black/40 border border-white/10 p-6 text-white font-bold resize-none focus:border-purple-500/50 transition-all outline-none"
+                    />
+                    
+                    <div className="flex gap-4">
+                      <Button 
+                        className="flex-1 h-16 rounded-2xl bg-purple-500 hover:bg-purple-600 text-white font-black text-lg shadow-xl shadow-purple-500/20"
+                        disabled={isBroadcasting || !broadcastMessage.trim()}
+                        onClick={async () => {
+                          if (!confirm('هل أنت متأكد من إرسال هذه الرسالة للجميع؟ قد يستغرق الأمر بعض الوقت.')) return;
+                          setIsBroadcasting(true);
+                          try {
+                            // Fetch all users to broadcast
+                            const usersSnap = await getDocs(query(collection(db, 'users'), limit(500)));
+                            let successCount = 0;
+                            
+                            for (const userDoc of usersSnap.docs) {
+                              if (userDoc.id !== SUPPORT_UID) {
+                                await sendSupportMessage(userDoc.id, broadcastMessage);
+                                successCount++;
+                              }
+                            }
+                            
+                            showToast(`✅ تم إرسال الرسالة إلى ${successCount} مستخدم!`);
+                            setBroadcastMessage('');
+                          } catch (err) {
+                            console.error(err);
+                            showToast('❌ فشل الإرسال الجماعي');
+                          } finally {
+                            setIsBroadcasting(false);
+                          }
+                        }}
+                      >
+                        {isBroadcasting ? (
+                          <span className="flex items-center gap-2">
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                            جاري الإرسال للجميع...
+                          </span>
+                        ) : 'بدء الإرسال الجماعي ✨'}
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        className="h-16 px-8 rounded-2xl border-white/10 text-white font-black"
+                        onClick={() => setBroadcastMessage('')}
+                      >
+                        مسح
+                      </Button>
+                    </div>
                   </div>
                 </motion.div>
-              ))
+              </div>
+            ) : activeTab === 'stats' ? (
+              <div className="col-span-full">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                   <div className="p-6 rounded-[2rem] bg-blue-500/5 border border-blue-500/10">
+                      <p className="text-[10px] font-black text-blue-500 uppercase mb-1">المستخدمين</p>
+                      <p className="text-3xl font-black text-white">{stats.total}</p>
+                   </div>
+                   <div className="p-6 rounded-[2rem] bg-amber-500/5 border border-amber-500/10">
+                      <p className="text-[10px] font-black text-amber-500 uppercase mb-1">المميزين VIP</p>
+                      <p className="text-3xl font-black text-white">{stats.vip}</p>
+                   </div>
+                   <div className="p-6 rounded-[2rem] bg-red-500/5 border border-red-500/10">
+                      <p className="text-[10px] font-black text-red-500 uppercase mb-1">المحظورين</p>
+                      <p className="text-3xl font-black text-white">{stats.banned}</p>
+                   </div>
+                   <div className="p-6 rounded-[2rem] bg-green-500/5 border border-green-500/10">
+                      <p className="text-[10px] font-black text-green-500 uppercase mb-1">طلبات الشراء</p>
+                      <p className="text-3xl font-black text-white">{purchaseRequests.length}</p>
+                   </div>
+                </div>
+              </div>
+            ) : activeTab === 'settings' ? (
+              <div className="col-span-full">
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-8 rounded-[3rem] bg-zinc-900/60 border border-red-500/20 space-y-8"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center text-red-500">
+                      <ShieldAlert className="w-8 h-8" />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-black text-white">إعدادات النظام العالمي ⚙️</h3>
+                      <p className="text-sm text-muted-foreground font-bold">التحكم في الميزات الأساسية للبرنامج بالكامل.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className={`p-6 rounded-3xl border transition-all ${systemSettings.maintenance ? 'bg-red-500/10 border-red-500' : 'bg-white/5 border-white/10'}`}>
+                       <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                             <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${systemSettings.maintenance ? 'bg-red-500 text-white' : 'bg-white/10 text-white/50'}`}>
+                                <AlertTriangle className="w-6 h-6" />
+                             </div>
+                             <div>
+                                <h4 className="font-black text-white">وضع الصيانة</h4>
+                                <p className="text-[10px] text-muted-foreground font-bold">منع المستخدمين من دخول البرنامج</p>
+                             </div>
+                          </div>
+                          <Button 
+                            variant={systemSettings.maintenance ? 'destructive' : 'outline'}
+                            onClick={() => setSystemSettings(prev => ({ ...prev, maintenance: !prev.maintenance }))}
+                            className="rounded-xl font-black"
+                          >
+                            {systemSettings.maintenance ? 'تعطيل' : 'تفعيل'}
+                          </Button>
+                       </div>
+                    </div>
+
+                    <div className={`p-6 rounded-3xl border transition-all ${systemSettings.disableGames ? 'bg-amber-500/10 border-amber-500' : 'bg-white/5 border-white/10'}`}>
+                       <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                             <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${systemSettings.disableGames ? 'bg-amber-500 text-white' : 'bg-white/10 text-white/50'}`}>
+                                <Trophy className="w-6 h-6" />
+                             </div>
+                             <div>
+                                <h4 className="font-black text-white">تعطيل الألعاب</h4>
+                                <p className="text-[10px] text-muted-foreground font-bold">إيقاف ميزات الألعاب مؤقتاً</p>
+                             </div>
+                          </div>
+                          <Button 
+                            variant={systemSettings.disableGames ? 'default' : 'outline'}
+                            onClick={() => setSystemSettings(prev => ({ ...prev, disableGames: !prev.disableGames }))}
+                            className="rounded-xl font-black"
+                          >
+                            {systemSettings.disableGames ? 'تعطيل' : 'تفعيل'}
+                          </Button>
+                       </div>
+                    </div>
+                  </div>
+
+                  <Button 
+                    className="w-full h-16 rounded-2xl bg-red-500 hover:bg-red-600 text-white font-black text-lg shadow-xl shadow-red-500/20"
+                    disabled={isSavingSettings}
+                    onClick={async () => {
+                      setIsSavingSettings(true);
+                      try {
+                        await setDoc(doc(db, 'system', 'settings'), systemSettings);
+                        showToast('✅ تم حفظ الإعدادات العالمية بنجاح');
+                      } catch (err) {
+                        showToast('❌ فشل حفظ الإعدادات');
+                      } finally {
+                        setIsSavingSettings(false);
+                      }
+                    }}
+                  >
+                    {isSavingSettings ? <Loader2 className="w-5 h-5 animate-spin" /> : 'حفظ التغييرات في النظام 👑'}
+                  </Button>
+                </motion.div>
+              </div>
+            ) : activeTab === 'requests' ? (
+              <>
+                {isRequestsLoading ? (
+                  <div className="col-span-full py-40 flex flex-col items-center gap-4">
+                    <Loader2 className="w-12 h-12 text-primary animate-spin" />
+                    <p className="text-muted-foreground font-black animate-pulse">جاري جلب الطلبات...</p>
+                  </div>
+                ) : purchaseRequests.length === 0 ? (
+                  <div className="col-span-full py-40 text-center bg-zinc-900/20 border border-dashed border-white/5 rounded-[3rem]">
+                    <ShoppingBag className="w-16 h-16 text-muted/20 mx-auto mb-4" />
+                    <p className="text-muted-foreground font-black italic">لا توجد طلبات شراء حالياً</p>
+                  </div>
+                ) : (
+                  purchaseRequests.map(req => (
+                    <motion.div 
+                      key={req.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-6 rounded-[2.5rem] bg-zinc-900/60 border border-amber-500/10 hover:border-amber-500/30 transition-all flex flex-col gap-4 relative group"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center gap-3">
+                          <ShoppingBag className="w-5 h-5 text-amber-500" />
+                          <div>
+                            <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest leading-none mb-1">العميل</p>
+                            <h4 className="font-black text-white text-sm">{req.userDisplayName}</h4>
+                          </div>
+                        </div>
+                        <div className="px-3 py-1 rounded-full bg-amber-500/10 text-amber-500 text-[8px] font-black uppercase">
+                          {req.method}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="p-3 rounded-2xl bg-black/40 border border-white/5 flex flex-col gap-1">
+                            <span className="text-[8px] font-bold text-muted-foreground uppercase">اللون المطلوب</span>
+                            <span className={`text-xs font-black truncate ${getNameColorClass(req.colorValue)}`}>{req.colorName}</span>
+                          </div>
+                          <div className="p-3 rounded-2xl bg-black/40 border border-white/5 flex flex-col gap-1">
+                            <span className="text-[8px] font-bold text-muted-foreground uppercase">طريقة الدفع</span>
+                            <span className="text-xs font-black text-amber-500 truncate">{req.method}</span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="p-3 rounded-2xl bg-black/40 border border-white/5 flex flex-col gap-1">
+                            <span className="text-[8px] font-bold text-muted-foreground uppercase">الباقة</span>
+                            <span className="text-xs font-black text-white truncate">{req.plan === 'one_time' ? 'تفعيل دائم' : req.plan}</span>
+                          </div>
+                          <div className="p-3 rounded-2xl bg-black/40 border border-white/5 flex flex-col gap-1">
+                            <span className="text-[8px] font-bold text-muted-foreground uppercase">السعر</span>
+                            <span className="text-xs font-black text-green-500 truncate">{req.price || 'N/A'}</span>
+                          </div>
+                        </div>
+
+                        <div className="p-3 rounded-2xl bg-black/40 border border-white/5 space-y-1">
+                           <div className="flex justify-between items-center text-[8px] font-bold text-muted-foreground uppercase">
+                             <span>بيانات العميل</span>
+                             <span className="text-primary">@{req.username || 'بدون معرف'}</span>
+                           </div>
+                           <p className="text-[10px] font-black text-white">{req.userDisplayName || 'مستخدم'}</p>
+                           <p className="text-[10px] font-black text-white">{req.userPhoneNumber || 'N/A'}</p>
+                           {req.text && (
+                             <p className="mt-2 text-[9px] text-muted-foreground bg-white/5 p-2 rounded-lg whitespace-pre-wrap border border-white/5">{req.text}</p>
+                           )}
+                           <p className="text-[8px] font-mono text-muted-foreground truncate opacity-50">{req.userId}</p>
+                        </div>
+
+                        {req.screenshotUrl && (
+                           <div 
+                             className="rounded-2xl overflow-hidden cursor-pointer h-40 border border-white/10 group-hover:border-primary/30 transition-all relative"
+                             onClick={() => setAccountInfoUser({ photoURL: req.screenshotUrl, displayName: `وصل: ${req.userDisplayName}` } as any)}
+                           >
+                              <img src={req.screenshotUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
+                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Plus className="w-8 h-8 text-white" />
+                              </div>
+                           </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <div className="flex gap-2">
+                           <Button 
+                             variant="outline" 
+                             className="flex-1 h-12 rounded-2xl font-black text-[11px] border-white/10 hover:bg-zinc-800 text-white shadow-sm"
+                             onClick={() => {
+                                setSearchTerm(req.username || req.userDisplayName);
+                                setActiveTab('all');
+                             }}
+                           >
+                              <Users className="w-3.5 h-3.5 me-2" />
+                              ملف العميل
+                           </Button>
+                           <Button 
+                             className="flex-1 h-12 rounded-2xl font-black text-[11px] bg-green-500 hover:bg-green-600 text-white shadow-lg shadow-green-500/20"
+                             onClick={() => {
+                                setSelectedUserForColor({ uid: req.userId, color: req.colorValue || '' });
+                                setExpiryDialogOpen(true);
+                             }}
+                           >
+                              <Palette className="w-3.5 h-3.5 me-2" />
+                              قبول وتفعيل
+                           </Button>
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          className="w-full h-10 rounded-xl text-[10px] font-black text-red-400 hover:text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all"
+                          onClick={async () => {
+                            if (!confirm('هل تريد رفض هذا الطلب وحذفه؟')) return;
+                            try {
+                              await deleteDoc(doc(db, 'purchase_requests', req.id));
+                              await sendSupportMessage(req.userId, `❌ نعتذر منك، تم رفض طلب تفعيل اللون السحري الخاص بك. يرجى التأكد من معلومات الدفع والمحاولة مرة أخرى.`);
+                              showToast('✅ تم رفض وحذف الطلب بنجاح');
+                              fetchRequests();
+                            } catch (err) {
+                              showToast('❌ فشل تنفيذ العملية');
+                            }
+                          }}
+                        >
+                           <Trash2 className="w-3 h-3 me-2" />
+                           رفض الطلب وحذفه
+                        </Button>
+                      </div>
+                    </motion.div>
+                  ))
+                )}
+              </>
+            ) : (
+              loading ? (
+                <div className="col-span-full py-40 flex flex-col items-center gap-4">
+                  <Loader2 className="w-12 h-12 text-primary animate-spin" />
+                  <p className="text-muted-foreground font-black animate-pulse">جاري فحص قاعدة البيانات...</p>
+                </div>
+              ) : users.length === 0 ? (
+                <div className="col-span-full py-40 text-center bg-zinc-900/20 border border-dashed border-white/5 rounded-[3rem]">
+                  <ShieldAlert className="w-16 h-16 text-muted/20 mx-auto mb-4" />
+                  <p className="text-muted-foreground font-black italic">لا يوجد شيء هنا للمسح الضوئي</p>
+                </div>
+              ) : (
+                users.filter(u => !u.isDeleted).map(u => (
+                  <motion.div 
+                    layout
+                    key={u.uid}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="p-6 rounded-[2.5rem] bg-zinc-900/60 border border-white/5 hover:border-primary/20 transition-all flex flex-col gap-5 relative overflow-hidden group shadow-xl"
+                  >
+                    <div className="flex items-center gap-4">
+                      <Avatar className="h-16 w-16 border-2 border-white/5 shadow-2xl">
+                        <AvatarImage src={u.photoURL} />
+                        <AvatarFallback style={{ backgroundColor: u.nameColor }} className="text-white text-xl font-black">
+                          {u.displayName?.slice(0,2) || ''}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <h3 className={`text-lg font-black truncate ${getNameColorClass(u.specialColor || u.nameColor, u.specialColorExpiry)}`}>
+                          {u.displayName}
+                        </h3>
+                        <p className="text-[10px] text-muted-foreground font-mono opacity-50 truncate">{u.uid}</p>
+                        <div className="flex gap-2 mt-1">
+                          {u.isVerified && <div className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/20"><Star className="w-2.5 h-2.5 text-blue-500 fill-blue-500" /></div>}
+                          {u.isBanned && <span className="text-[8px] font-black bg-red-500/10 text-red-500 px-2 py-0.5 rounded-full border border-red-500/20">BANNED</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                       <p className="text-[10px] bg-white/5 text-muted-foreground px-3 py-1 rounded-full font-bold">{u.phoneNumber || 'لا يوجد رقم'}</p>
+                       <p className="text-[10px] bg-primary/10 text-primary px-3 py-1 rounded-full font-bold">Role: {u.isDeveloper ? 'Admin' : 'User'}</p>
+                       {u.specialColor && (
+                         <p className={`text-[10px] px-3 py-1 rounded-full font-black border ${formatRemainingTime(u.specialColorExpiry) === 'منتهي الصلاحية' ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-primary/10 border-primary/20 text-primary'}`}>
+                           {formatRemainingTime(u.specialColorExpiry) || 'تاريخ غير محدد'}
+                         </p>
+                       )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                       <Button 
+                         className="h-12 rounded-xl text-[10px] font-black bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 text-blue-500 flex items-center justify-center gap-1.5 col-span-2 shadow-sm"
+                         onClick={() => setAccountInfoUser(u)}
+                       >
+                         <Info className="w-3.5 h-3.5" />
+                         معلومات الحساب
+                       </Button>
+                       <Button 
+                         className={`h-12 rounded-xl text-[10px] font-black bg-purple-500/10 border border-purple-500/20 text-purple-500 hover:bg-purple-500/20 flex items-center justify-center gap-1.5 transition-all shadow-sm ${u.specialColor ? 'ring-2 ring-purple-500 ring-offset-2 ring-offset-zinc-950' : ''}`}
+                         onClick={() => {
+                           setSelectedUserForColor({ uid: u.uid, color: '' });
+                           setExpiryDialogOpen(true);
+                         }}
+                       >
+                         <Palette className="w-3.5 h-3.5" />
+                         {u.specialColor ? 'تعديل اللون ✨' : 'منح لون سحري ✨'}
+                       </Button>
+                       <Button 
+                         className="h-12 rounded-xl text-[10px] font-black bg-zinc-800 border border-white/5 hover:bg-zinc-700 transition-all text-white shadow-sm"
+                         onClick={() => setSelectedUser(u)}
+                       >
+                        <ShieldCheck className="w-3.5 h-3.5 ml-1" />
+                         إدارة الحساب
+                       </Button>
+                       <Button 
+                         className={`h-12 rounded-xl text-[10px] font-black transition-all col-span-2 shadow-sm ${u.isBanned ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500/20'}`}
+                         onClick={() => handleAction(u.uid, { isBanned: !u.isBanned })}
+                         disabled={u.isDeveloper}
+                       >
+                        <Ban className="w-3.5 h-3.5 ml-1" />
+                         {u.isBanned ? 'إلغاء الحظر' : 'حظر الحساب'}
+                       </Button>
+                    </div>
+                  </motion.div>
+                ))
+              )
             )}
           </div>
-        </div>
-      </div>
+    </div>
+  </div>
 
-      {/* Advanced Action Modal */}
+    {/* Advanced Action Modal */}
       <Dialog open={!!selectedUser} onOpenChange={() => setSelectedUser(null)}>
         <DialogContent className="max-w-md w-[95%] rounded-[3rem] bg-zinc-950 border-white/10 text-right font-sans p-7 overflow-y-auto no-scrollbar max-h-[85vh]" dir="rtl">
           {selectedUser && (
@@ -708,6 +1091,16 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
                    >
                      <ShieldAlert className="w-4 h-4" />
                      {selectedUser.isDeveloper ? 'مسؤؤل' : 'عادي'}
+                   </Button>
+
+                   <Button 
+                     variant="outline" 
+                     className={`h-14 rounded-2xl font-black gap-2 transition-all col-span-2 ${selectedUser.isBanned ? 'bg-red-500 text-white border-red-500' : 'border-white/10 text-muted-foreground'}`}
+                     onClick={() => handleAction(selectedUser.uid, { isBanned: !selectedUser.isBanned })}
+                     disabled={selectedUser.isDeveloper}
+                   >
+                     <Ban className="w-4 h-4" />
+                     {selectedUser.isBanned ? 'تم الحظر (إلغاء)' : 'حظر الحساب'}
                    </Button>
                 </div>
 
@@ -785,6 +1178,17 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
               {/* Info Grid */}
               <div className="px-8 pb-10 space-y-4">
                 <div className="grid grid-cols-1 gap-3">
+                  {/* UID */}
+                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group transition-all hover:bg-white/10">
+                    <div className="w-10 h-10 rounded-xl bg-zinc-500/10 flex items-center justify-center text-zinc-500 group-hover:scale-110 transition-transform">
+                      <CreditCard className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">المعرف (UID)</p>
+                      <p className="text-[10px] font-mono text-white truncate">{accountInfoUser.uid}</p>
+                    </div>
+                  </div>
+
                   {/* Name */}
                   <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group transition-all hover:bg-white/10">
                     <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
@@ -793,6 +1197,37 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
                     <div className="flex-1">
                       <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">الاسم الكامل</p>
                       <p className="text-sm font-bold text-white">{accountInfoUser.displayName}</p>
+                    </div>
+                  </div>
+
+                  {/* Phone & Email */}
+                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group transition-all hover:bg-white/10">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
+                      <Smartphone className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">بيانات التواصل</p>
+                      <p className="text-sm font-bold text-white mb-0.5">{accountInfoUser.phoneNumber || 'لا يوجد رقم'}</p>
+                      <p className="text-[10px] text-muted-foreground">{accountInfoUser.email || 'لا يوجد بريد'}</p>
+                    </div>
+                  </div>
+
+                  {/* Role & Status */}
+                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group transition-all hover:bg-white/10">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 group-hover:scale-110 transition-transform">
+                      <ShieldCheck className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">الحالة والرتبة</p>
+                      <div className="flex gap-2 items-center">
+                        <span className={`text-xs font-black ${accountInfoUser.isDeveloper ? 'text-red-500' : 'text-primary'}`}>
+                          {accountInfoUser.isDeveloper ? 'مسؤول (Admin)' : 'مستخدم عادي'}
+                        </span>
+                        <span className="text-white/20">|</span>
+                        <span className={`text-xs font-black ${accountInfoUser.isBanned ? 'text-red-500' : 'text-green-500'}`}>
+                          {accountInfoUser.isBanned ? 'محظور' : 'نشط'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -849,21 +1284,28 @@ export function UserManagementDashboard({ onClose }: UserManagementDashboardProp
                       </div>
                     )}
                   </div>
+                </div>
 
-                  {/* Join Program Date (Same as Created) */}
-                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group transition-all hover:bg-white/10">
-                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
-                      <History className="w-5 h-5" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-0.5">تاريخ الانضمام للبرنامج</p>
-                      <p className="text-sm font-bold text-white">
-                        {accountInfoUser.createdAt ? (
-                          new Intl.DateTimeFormat('ar-IQ', { dateStyle: 'medium' }).format(accountInfoUser.createdAt.toDate())
-                        ) : 'غير متوفر'}
-                      </p>
-                    </div>
-                  </div>
+                <div className="grid grid-cols-2 gap-2">
+                   <Button 
+                    className="h-12 rounded-xl font-black bg-purple-500/20 text-purple-500 border border-purple-500/20"
+                    onClick={() => {
+                        setSelectedUserForColor({ uid: accountInfoUser.uid, color: '' });
+                        setExpiryDialogOpen(true);
+                        setAccountInfoUser(null);
+                    }}
+                   >
+                     تحديث اللون
+                   </Button>
+                   <Button 
+                    className="h-12 rounded-xl font-black bg-red-500/20 text-red-500 border border-red-500/20"
+                    onClick={() => {
+                        setSelectedUser(accountInfoUser);
+                        setAccountInfoUser(null);
+                    }}
+                   >
+                     إدارة الحساب
+                   </Button>
                 </div>
 
                 <Button 

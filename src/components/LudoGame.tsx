@@ -109,7 +109,7 @@ export default function LudoGame({ gameId, currentUser, onClose }: LudoGameProps
   }, [game, currentUser?.uid, gameId]);
 
   const rollDice = async () => {
-    if (!isMyTurn || isRolling || game.status !== 'playing' || game.waitingForMove) return;
+    if (!isMyTurn || isRolling || game.status !== 'playing' || game.waitingForMove || useStore.getState().quotaExceeded) return;
     
     setIsRolling(true);
     let roll = 1;
@@ -154,7 +154,7 @@ export default function LudoGame({ gameId, currentUser, onClose }: LudoGameProps
   };
 
   const movePiece = async (idx: number) => {
-    if (!isMyTurn || !game.waitingForMove) return;
+    if (!isMyTurn || !game.waitingForMove || useStore.getState().quotaExceeded) return;
     
     const roll = game.lastRoll;
     const myPieces = [...game.pieces[currentUser.uid]];
@@ -225,6 +225,7 @@ export default function LudoGame({ gameId, currentUser, onClose }: LudoGameProps
   };
 
   const resetGame = async () => {
+    if (useStore.getState().quotaExceeded) return;
     try {
       await updateDoc(doc(db, 'games', gameId), {
         status: 'playing',

@@ -24,6 +24,8 @@ export interface UserProfile {
   animatedColorsUnlockedAt?: any;
   isVerified?: boolean;
   isDeveloper?: boolean;
+  isDeveloperAdmin?: boolean; // Higher level admin access
+  username?: string;
   isBanned?: boolean;
   isDeleted?: boolean;
   deletedAt?: any;
@@ -79,6 +81,7 @@ export interface Chat {
     phoneNumber?: string;
   } };
   unreadCount?: { [userId: string]: number };
+  readUntil?: { [userId: string]: any }; // Timestamp of the latest message read by this user
   mentionsCount?: { [userId: string]: number };
   pinnedBy?: string[];
   call?: {
@@ -94,17 +97,19 @@ export interface Message {
   chatId: string;
   senderId: string;
   text?: string;
-  type: 'text' | 'image' | 'video' | 'file' | 'location' | 'voice' | 'sticker';
+  type: 'text' | 'image' | 'video' | 'voice' | 'file' | 'location' | 'sticker' | 'purchase_notice' | 'system' | 'video_note' | 'group_notice' | 'call';
   fileUrl?: string;
   fileName?: string;
+  fileSize?: string;
+  duration?: string;
   location?: { latitude: number; longitude: number };
+  gameId?: string;
+  gameType?: 'blackjack' | 'ludo';
   isLive?: boolean;
   liveExpiresAt?: any;
   createdAt: any;
   read?: boolean;
-  reactions?: { [emoji: string]: string[] }; // emoji -> list of userIds
-  gameId?: string;
-  gameType?: 'ludo' | 'blackjack';
+  reactions?: { [emoji: string]: string[] };
   replyTo?: { id: string; text: string; senderName: string };
   isEdited?: boolean;
 }

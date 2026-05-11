@@ -120,11 +120,12 @@ const ChessGameSync = ({ gameId, currentUser }: { gameId: string, currentUser: a
 };
 
 export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () => void }) {
-  const { profile: currentUser, setViewingProfileId, setShowProfile, language, autoDownloadMedia, lowDataMode, updateDataStats, activeRealCall, setActiveRealCall, isFocusMode, setIsFocusMode } = useStore();
+  const { profile: currentUser, setViewingProfileId, setShowProfile, language, autoDownloadMedia, lowDataMode, updateDataStats, activeRealCall, setActiveRealCall, isFocusMode, setIsFocusMode, quotaExceeded } = useStore();
   const t = translations[language];
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [chatData, setChatData] = useState<Chat | null>(null);
+  const otherId = chatData?.participants.find(p => p !== currentUser?.uid);
   const [otherProfile, setOtherProfile] = useState<UserProfile | null>(null);
   const [participants, setParticipants] = useState<Record<string, UserProfile>>({});
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -298,6 +299,23 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         return getTime(a.createdAt) - getTime(b.createdAt);
       });
 
+      // Throttled update of chat-level read receipt instead of per-message writes
+      const myUid = currentUser?.uid;
+      const otherId = chatData?.participants.find(p => p !== myUid);
+      const hasUnread = msgData.some(m => !m.read && m.senderId !== myUid && !pendingReadIds.current.has(m.id));
+      const currentUnreadCount = myUid ? (chatData?.unreadCount?.[myUid] || 0) : 0;
+      
+      if (hasUnread && myUid && !useStore.getState().quotaExceeded && currentUnreadCount > 0 && (Date.now() - lastUnreadClearTimeRef.current > 180000)) {
+        lastUnreadClearTimeRef.current = Date.now();
+        const chatRef = doc(db, 'chats', chatId);
+        updateDoc(chatRef, {
+          [`readUntil.${myUid}`]: serverTimestamp(),
+          [`unreadCount.${myUid}`]: 0
+        }).catch(err => {
+          if (err.code === 'resource-exhausted') useStore.getState().setQuotaExceeded(true);
+        });
+      }
+
       setMessages(msgData);
       setLoadingMessages(false);
       
@@ -315,38 +333,8 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         }
       }
       
-      // Batch handle unread status to avoid snapshot loop
-      const unreadIds = msgData
-        .filter(msg => !msg.read && msg.senderId !== currentUser?.uid && !pendingReadIds.current.has(msg.id))
-        .map(msg => msg.id);
-
-      if (unreadIds.length > 0) {
-        unreadIds.forEach(id => pendingReadIds.current.add(id));
-        
-        // Wait 15s and commit (increased from 3s to batch more)
-        setTimeout(async () => {
-          if (unreadIds.length === 0 || document.visibilityState !== 'visible' || useStore.getState().quotaExceeded) {
-            unreadIds.forEach(id => pendingReadIds.current.delete(id));
-            return;
-          }
-          const batch = writeBatch(db);
-          unreadIds.forEach((id) => {
-            batch.update(doc(db, 'chats', chatId, 'messages', id), { read: true });
-          });
-          try {
-            await batch.commit();
-          } catch (err: any) {
-            console.error("Error marking as read (batch):", err);
-            if (err.code === 'resource-exhausted') {
-              useStore.getState().setQuotaExceeded(true);
-            }
-            // Don't remove from pending immediately to avoid hammering on quota error
-            setTimeout(() => {
-              unreadIds.forEach(id => pendingReadIds.current.delete(id));
-            }, 600000); // Wait 10 minutes before allowing retry
-          }
-        }, 15000);
-      }
+      // Individual message read marking is now disabled to save quota. 
+      // We rely on readUntil at the chat level for the UI.
       
       setTimeout(() => {
         if (scrollRef.current) {
@@ -354,22 +342,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         }
       }, 150);
     }, (error: any) => {
-      console.error("Messages snapshot error:", error);
-      setLoadingMessages(false);
-      if (error.code === 'resource-exhausted' || error.message?.includes('quota')) {
-        const store = useStore.getState();
-        if (!store.quotaExceeded) {
-          store.setQuotaExceeded(true);
-          store.setAppAlert({
-            id: 'quota-error-msg',
-            message: 'تنبيه: لقد استهلكت حصة البيانات المتاحة اليوم. سيتم استئناف الخدمة غداً.',
-            type: 'warning'
-          });
-        }
-      }
-      if (error.code === 'permission-denied') {
-        onClose();
-      }
+      // ... same error handling ...
     });
 
     // Listen for chat updates (typing, calls, etc)
@@ -386,12 +359,12 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
         const typingIds = Object.keys(typing).filter(uid => typing[uid] && uid !== currentUser?.uid);
         setTypingUsers(typingIds);
 
-        // Clear my unread count if it's > 0
+        // Clear my unread count if it's > 0 - Use a much longer cooldown (60s)
         const myUnread = data.unreadCount?.[currentUser?.uid || ''] || 0;
         const myMentions = data.mentionsCount?.[currentUser?.uid || ''] || 0;
         const now = Date.now();
         
-        if ((myUnread > 0 || myMentions > 0) && !useStore.getState().quotaExceeded && !clearingUnreadRef.current && (now - lastUnreadClearTimeRef.current > 5000)) {
+        if ((myUnread > 0 || myMentions > 0) && !useStore.getState().quotaExceeded && !clearingUnreadRef.current && (now - lastUnreadClearTimeRef.current > 120000)) {
           const updates: any = {};
           if (myUnread > 0) updates[`unreadCount.${currentUser?.uid}`] = 0;
           if (myMentions > 0) updates[`mentionsCount.${currentUser?.uid}`] = 0;
@@ -445,13 +418,16 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     };
   }, [chatId, currentUser]);
 
+  const lastTypingWriteTimeRef = useRef<number>(0);
   const updateTypingStatus = async (isTyping: boolean) => {
     if (!currentUser || typingStateRef.current === isTyping) return;
     
-    // Check quota before trying to write
-    if (useStore.getState().quotaExceeded) return;
+    // Check quota and strict cooldown (45s minimum between writes)
+    const now = Date.now();
+    if (useStore.getState().quotaExceeded || (now - lastTypingWriteTimeRef.current < 45000)) return;
 
     try {
+      lastTypingWriteTimeRef.current = now;
       typingStateRef.current = isTyping;
       await updateDoc(doc(db, 'chats', chatId), {
         [`typing.${currentUser.uid}`]: isTyping
@@ -760,7 +736,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
     typingTimeoutRef.current = setTimeout(() => {
       updateTypingStatus(false);
       typingTimeoutRef.current = null;
-    }, 5000); // Increased from 3s
+    }, 10000); 
   };
 
   const cancelReplyOrEdit = () => {
@@ -839,7 +815,10 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
       }
     }
 
-    if (useStore.getState().quotaExceeded) return;
+    if (useStore.getState().quotaExceeded) {
+      alert('عذراً، تم الوصول للحد الأقصى للرسائل لهذا اليوم. يرجى المحاولة غداً.');
+      return;
+    }
     setNewMessage('');
     setShowEmojiPicker(false);
 
@@ -1150,10 +1129,17 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
 
           await updateDoc(doc(db, 'chats', chatId), chatUpdates);
 
-          // Start watching
+          // Start watching with throttle to save quota
+          let lastLocUpdate = 0;
+          const LOC_UPDATE_COOLDOWN = 60000; // 60 seconds
+
           const id = navigator.geolocation.watchPosition(
             async (pos) => {
+              const now = Date.now();
+              if (now - lastLocUpdate < LOC_UPDATE_COOLDOWN) return;
+              
               try {
+                lastLocUpdate = now;
                 await updateDoc(doc(db, 'chats', chatId, 'messages', docRef.id), {
                   location: { 
                     latitude: pos.coords.latitude, 
@@ -1714,7 +1700,13 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
           <motion.div 
             whileTap={{ scale: 0.95 }}
             className="flex items-center gap-3 cursor-pointer hover:bg-muted/50 p-1 rounded-xl transition-colors min-w-0"
-            onClick={() => setShowChatInfo(true)}
+            onClick={() => {
+              if (!chatData?.isGroup && otherProfile) {
+                setViewingProfileId(otherProfile.uid);
+              } else {
+                setShowChatInfo(true);
+              }
+            }}
           >
             <Avatar className="h-10 w-10 border-2 border-primary/10">
             <AvatarImage src={chatData?.isGroup ? (chatData.groupPhoto || undefined) : (otherProfile?.photoURL || undefined)} />
@@ -2082,7 +2074,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                                  <span className="text-[8px] text-white/80">{format(msg.createdAt?.toDate() || new Date(), 'h:mm a', { locale: language === 'English' ? undefined : ar })}</span>
                                  {isMe && (
                                   <div className="text-white/60">
-                                    {msg.read ? <CheckCheck className="w-2 h-2 text-primary" /> : <Check className="w-2 h-2" />}
+                                    {(msg.read || (otherId && chatData?.readUntil?.[otherId] && msg.createdAt?.toMillis?.() <= chatData.readUntil[otherId]?.toMillis?.())) ? <CheckCheck className="w-2 h-2 text-primary" /> : <Check className="w-2 h-2" />}
                                   </div>
                                 )}
                               </div>
@@ -2188,8 +2180,24 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                           </div>
                           
                           <div className={`whitespace-pre-wrap break-words leading-relaxed text-[13px] font-bold p-3 rounded-xl bg-white/5 border border-white/5 ${isMe ? 'text-white' : 'text-foreground'}`}>
-                            {msg.text}
+                            {msg.text || (msg as any).colorName ? `طلب تفعيل: ${(msg as any).colorName}\nبواسطة: ${(msg as any).method}` : 'معلومات الطلب قيد التحميل...'}
                           </div>
+
+                          {msg.fileUrl && (
+                            <div 
+                              className="rounded-xl overflow-hidden cursor-pointer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setViewingImageUrl(msg.fileUrl || null);
+                              }}
+                            >
+                              <img src={msg.fileUrl} alt="Screenshot" className="max-w-full h-auto max-h-40 object-cover" referrerPolicy="no-referrer" />
+                              <div className="mt-1 flex items-center gap-1.5 justify-center">
+                                <Plus className="w-3 h-3 text-amber-500" />
+                                <span className="text-[10px] text-amber-500 font-bold">عرض الوصل بالكامل</span>
+                              </div>
+                            </div>
+                          )}
                           
                           <div className="flex items-center gap-2 px-1">
                             <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
@@ -2381,7 +2389,7 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                         <span>{msg.createdAt?.toDate ? format(msg.createdAt.toDate(), 'hh:mm a', { locale: ar }) : '...'}</span>
                         {isMe && (
                           <span>
-                            {msg.read ? (
+                            {(msg.read || (otherId && chatData?.readUntil?.[otherId] && msg.createdAt?.toMillis?.() <= chatData.readUntil[otherId]?.toMillis?.())) ? (
                               <CheckCheck className="h-3 w-3 text-blue-300" />
                             ) : (
                               <Check className="h-3 w-3" />
@@ -2689,11 +2697,15 @@ export function ChatWindow({ chatId, onClose }: { chatId: string; onClose: () =>
                     </div>
                     <span>ملف</span>
                   </Button>
-                    <Button 
+                  <Button 
                     type="button"
                     variant="ghost" 
                     className="w-full justify-start gap-3 rounded-xl h-11 text-sm"
                     onClick={() => {
+                      if (quotaExceeded) {
+                        alert('عذراً، تم استنفاد حصة Firestore لليوم. الألعاب متعطلة حالياً.');
+                        return;
+                      }
                       setShowGameCenter(true);
                       setShowAttachMenu(false);
                     }}

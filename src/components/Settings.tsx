@@ -28,13 +28,15 @@ import {
   Trash2,
   Maximize2,
   Loader2,
-  RotateCcw
+  RotateCcw,
+  LayoutDashboard
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { doc, updateDoc, collection, getDocs, deleteDoc, writeBatch } from 'firebase/firestore';
 import { Language, translations } from '@/lib/i18n';
 import { useStore } from '@/store/useStore';
 import { getNameColorClass, isMagicColor } from '@/lib/utils';
+import { DEV_EMAILS, DEV_USERNAMES } from '@/constants';
 import { NOTIFICATION_SOUNDS, PRESET_GRADIENTS, PRESET_COLORS } from '@/constants';
 import { requestNotificationPermission, showSystemNotification } from '@/lib/notifications';
 import {
@@ -99,7 +101,9 @@ export function Settings() {
   const [activeTab, setActiveTab] = useState('appearance');
   const [isClearingCache, setIsClearingCache] = useState(false);
 
-  const isDeveloperUser = profile.isDeveloper || user?.email === 'isofiq@teleiraq.app' || user?.email === 'ahmedgbory7@gmail.com';
+  const isDeveloperUser = profile.isDeveloper || profile.isDeveloperAdmin || (profile.email && DEV_EMAILS.includes(profile.email)) || (profile as any).username && DEV_USERNAMES.includes((profile as any).username);
+
+  const isResetAuthorized = (profile.email && DEV_EMAILS.includes(profile.email)) || (profile as any).username && DEV_USERNAMES.includes((profile as any).username);
 
   const handleClearCache = () => {
     if (!window.confirm((t as any).clearCache + '؟')) return;
@@ -813,13 +817,23 @@ export function Settings() {
                         <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">تلي عراق - تحكم كامل</p>
                       </div>
                     </div>
-                    <Button 
-                      onClick={() => setShowDevPanel(true)}
-                      className="w-full h-11 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold gap-2 shadow-lg active:scale-95 transition-all"
-                    >
-                      <Users className="w-4 h-4" />
-                      فتح لوحة إدارة المستخدمين
-                    </Button>
+                    <div className="grid grid-cols-1 gap-2">
+                      <Button 
+                        onClick={() => useStore.getState().setShowUserDashboard(true)}
+                        className="w-full h-11 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold gap-2 shadow-lg active:scale-95 transition-all"
+                      >
+                        <LayoutDashboard className="w-4 h-4" />
+                        لوحة إدارة المستخدمين
+                      </Button>
+                      <Button 
+                        variant="outline"
+                        onClick={() => setShowDevPanel(true)}
+                        className="w-full h-11 rounded-xl border-primary/20 text-primary font-bold gap-2 active:scale-95 transition-all"
+                      >
+                        <Shield className="w-4 h-4" />
+                        إعدادات السيرفر المتقدمة
+                      </Button>
+                    </div>
                   </div>
                 )}
 
@@ -828,7 +842,7 @@ export function Settings() {
                   تسجيل الخروج
                 </Button>
 
-                {(user?.email === 'ahmedgbory7@gmail.com' || user?.email === 'isofiq@teleiraq.app') && (
+                {isResetAuthorized && (
                   <div className="p-4 mt-4 border-2 border-dashed border-destructive/20 rounded-2xl space-y-4">
                     <div className="flex items-center gap-2">
                       <Shield className="w-4 h-4 text-destructive" />

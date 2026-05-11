@@ -34,3 +34,8 @@ export const PRESET_COLORS = [
   '#1c1c1c', // Deep Dark
   '#001529'  // Navy Dark
 ];
+
+export const DEV_EMAILS = ['isofiq@teleiraq.app', 'ahmedgbory7@gmail.com'];
+export const DEV_USERNAMES = ['isofiq', 'isofiq_dev'];
+export const SUPPORT_UID = 'teleiraq-system';
+export const SUPPORT_NAME = 'تلي عراق - الدعم الفني (المطور ISOFIQ)';

@@ -3,6 +3,7 @@ import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { Button } from '@/components/ui/button';
 import { RotateCcw, Trophy, AlertCircle } from 'lucide-react';
+import { useStore } from '@/store/useStore';
 
 interface ChessGameProps {
   onMove?: (fen: string, winner: string | null) => void;
@@ -45,7 +46,7 @@ export function ChessGame({ onMove, gameState, isPlayerTurn, gameWinner }: Chess
   }
 
   function onDrop(sourceSquare: string, targetSquare: string) {
-    if (!isPlayerTurn) return false;
+    if (!isPlayerTurn || useStore.getState().quotaExceeded) return false;
     const move = makeAMove({
       from: sourceSquare,
       to: targetSquare,
@@ -56,6 +57,7 @@ export function ChessGame({ onMove, gameState, isPlayerTurn, gameWinner }: Chess
   }
 
   const resetGame = () => {
+    if (useStore.getState().quotaExceeded) return;
     const newGame = new Chess();
     setGame(newGame);
     onMove?.(newGame.fen(), null);

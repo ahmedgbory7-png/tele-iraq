@@ -56,39 +56,65 @@ service cloud.firestore {
 
     function isDeveloper() {
       return isAuthenticated() && (
-        request.auth.token.email.matches('(?i)ahmedgbory7@gmail\\.com') ||
-        request.auth.token.email.matches('(?i)isofiq@teleiraq\\.app') ||
-        request.auth.token.email.matches('(?i)ahmed\\.gbory\\.7@gmail\\.com') ||
+        request.auth.token.email == 'ahmedgbory7@gmail.com' ||
+        request.auth.token.email == 'ahmed.gbory.7@gmail.com' ||
+        request.auth.token.email == 'isofiq@teleiraq.app' ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isDeveloper', false) == true)
       );
     }
 
+    function isValidNotification(data) {
+      return data.keys().hasAll(['userId', 'userDisplayName', 'type', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.type == 'purchase' &&
+             data.createdAt is timestamp &&
+             (!('colorName' in data) || data.colorName == null || data.colorName is string) &&
+             (!('methodName' in data) || data.methodName == null || data.methodName is string);
+    }
+
+    function isValidPurchaseRequest(data) {
+      return data.keys().hasAll(['id', 'userId', 'userDisplayName', 'status', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.status == 'pending' &&
+             data.createdAt is timestamp &&
+             (!('screenshotUrl' in data) || data.screenshotUrl == null || (data.screenshotUrl is string && data.screenshotUrl.size() <= 1000000)) &&
+             (!('colorValue' in data) || data.colorValue == null || data.colorValue is string) &&
+             (!('colorName' in data) || data.colorName == null || data.colorName is string) &&
+             (!('method' in data) || data.method == null || data.method is string) &&
+             (!('plan' in data) || data.plan == null || data.plan is string) &&
+             (!('price' in data) || data.price == null || data.price is string) &&
+             (!('text' in data) || data.text == null || data.text is string);
+    }
+
     function isValidUser(data) {
-      let isDev = isAuthenticated() && request.auth.token.email == 'isofiq@teleiraq.app';
+      let isDev = isAuthenticated() && (
+        request.auth.token.email.matches('(?i)ahmedgbory7@gmail\\.com') || 
+        request.auth.token.email.matches('(?i)isofiq@teleiraq\\.app')
+      );
       let hasUid = 'uid' in data;
       return (!hasUid || (data.uid == request.auth.uid || data.uid == 'teleiraq-system' || isDev)) &&
-             (!('phoneNumber' in data) || data.phoneNumber is string) &&
-             (!('email' in data) || (data.email is string && data.email.size() <= 200)) &&
-             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
-             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1000000)) &&
-             (!('status' in data) || (data.status is string && data.status.size() <= 300)) &&
+             (!('phoneNumber' in data) || data.phoneNumber == null || data.phoneNumber is string) &&
+             (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 200)) &&
+             (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 1000000)) &&
+             (!('status' in data) || data.status == null || (data.status is string && data.status.size() <= 300)) &&
              (!('lastSeen' in data) || (data.lastSeen == null || data.lastSeen is timestamp)) &&
-             (!('chatBackground' in data) || (data.chatBackground is string && data.chatBackground.size() <= 1000000)) &&
-             (!('username' in data) || (data.username is string && data.username.size() <= 50)) &&
-             (!('birthDate' in data) || (data.birthDate is string && data.birthDate.size() <= 20)) &&
-             (!('city' in data) || (data.city is string && data.city.size() <= 50)) &&
-             (!('hobbies' in data) || (data.hobbies is string && data.hobbies.size() <= 200)) &&
-             (!('privacy' in data) || data.privacy is map) &&
-             (!('notificationSounds' in data) || data.notificationSounds is map) &&
-             (!('sessionVersion' in data) || data.sessionVersion is number) &&
-             (!('friends' in data) || (data.friends is list && data.friends.size() <= 1000)) &&
-             (!('friendDetails' in data) || data.friendDetails is map) &&
-             (!('blockedUsers' in data) || (data.blockedUsers is list && data.blockedUsers.size() <= 1000)) &&
-             (!('isVerified' in data) || data.isVerified is bool) &&
-             (!('isDeveloper' in data) || data.isDeveloper is bool) &&
-             (!('isBanned' in data) || data.isBanned is bool) &&
-             (!('forceLogoutSignal' in data) || data.forceLogoutSignal is number) &&
+             (!('chatBackground' in data) || data.chatBackground == null || (data.chatBackground is string && data.chatBackground.size() <= 1000000)) &&
+             (!('username' in data) || data.username == null || (data.username is string && data.username.size() <= 50)) &&
+             (!('birthDate' in data) || data.birthDate == null || (data.birthDate is string && data.birthDate.size() <= 20)) &&
+             (!('city' in data) || data.city == null || (data.city is string && data.city.size() <= 50)) &&
+             (!('hobbies' in data) || data.hobbies == null || (data.hobbies is string && data.hobbies.size() <= 200)) &&
+             (!('privacy' in data) || data.privacy == null || data.privacy is map) &&
+             (!('notificationSounds' in data) || data.notificationSounds == null || data.notificationSounds is map) &&
+             (!('sessionVersion' in data) || data.sessionVersion == null || data.sessionVersion is number) &&
+             (!('friends' in data) || data.friends == null || (data.friends is list && data.friends.size() <= 1000)) &&
+             (!('friendDetails' in data) || data.friendDetails == null || data.friendDetails is map) &&
+             (!('blockedUsers' in data) || data.blockedUsers == null || (data.blockedUsers is list && data.blockedUsers.size() <= 1000)) &&
+             (!('isVerified' in data) || data.isVerified == null || data.isVerified is bool) &&
+             (!('isDeveloper' in data) || data.isDeveloper == null || data.isDeveloper is bool) &&
+             (!('isBanned' in data) || data.isBanned == null || data.isBanned is bool) &&
+             (!('forceLogoutSignal' in data) || data.forceLogoutSignal == null || data.forceLogoutSignal is number) &&
              (!('specialColor' in data) || (data.specialColor == null || (data.specialColor is string && data.specialColor.size() <= 50))) &&
              (!('verifiedAt' in data) || (data.verifiedAt == null || data.verifiedAt is timestamp)) &&
              (!('specialColorExpiry' in data) || (data.specialColorExpiry == null || data.specialColorExpiry is timestamp)) &&
@@ -99,8 +125,8 @@ service cloud.firestore {
              (!('magicIraqUnlockedAt' in data) || (data.magicIraqUnlockedAt == null || data.magicIraqUnlockedAt is timestamp)) &&
              (!('animatedColorsUnlockedAt' in data) || (data.animatedColorsUnlockedAt == null || data.animatedColorsUnlockedAt is timestamp)) &&
              (!('nameColor' in data) || (data.nameColor == null || (data.nameColor is string && data.nameColor.size() <= 50))) &&
-             (!('reels' in data) || (data.reels is list && data.reels.size() <= 100)) &&
-             (!('reelsCount' in data) || data.reelsCount is number) &&
+             (!('reels' in data) || data.reels == null || (data.reels is list && data.reels.size() <= 100)) &&
+             (!('reelsCount' in data) || data.reelsCount == null || data.reelsCount is number) &&
              (!('lastReelAt' in data) || (data.lastReelAt == null || data.lastReelAt is timestamp));
     }
 
@@ -129,9 +155,9 @@ service cloud.firestore {
              (data.senderId == request.auth.uid || data.senderId == 'teleiraq-system') &&
              (!('text' in data) || (data.text is string && data.text.size() <= 20000)) &&
              data.type in ['text', 'image', 'video', 'file', 'location', 'voice', 'sticker', 'system', 'purchase_notice'] &&
-             (!('image' in data) || (data.image is string && data.image.size() <= 1500000)) &&
-             (!('fileUrl' in data) || (data.fileUrl is string && data.fileUrl.size() <= 1000000)) &&
-             (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 200)) &&
+             (!('image' in data) || (data.image is string && data.image.size() <= 10000000)) &&
+             (!('fileUrl' in data) || (data.fileUrl is string && data.fileUrl.size() <= 10000000)) &&
+             (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 1000)) &&
              (!('location' in data) || (data.location is map && data.location.latitude is number && data.location.longitude is number)) &&
              (!('replyTo' in data) || (data.replyTo is map && data.replyTo.id is string && ('text' in data.replyTo || 'senderName' in data.replyTo))) &&
              (!('reactions' in data) || data.reactions is map) &&
@@ -179,6 +205,7 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
+      allow list: if isDeveloper() || (isAuthenticated() && resource.data.isDeveloper == true);
       allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && (
         !incoming().keys().hasAny(['isDeveloper', 'isBanned', 'forceLogoutSignal', 'specialColor', 'isVerified']) ||
         isDeveloper()
@@ -205,12 +232,17 @@ service cloud.firestore {
       }
     }
 
+    match /purchase_notifications/{notifId} {
+      allow create: if isAuthenticated() && isValidNotification(incoming());
+      allow read, list, delete: if isDeveloper();
+    }
+
     match /chats/{chatId} {
       function isParticipant() {
-        return isAuthenticated() && request.auth.uid in resource.data.participants;
+        return isAuthenticated() && (request.auth.uid in resource.data.participants);
       }
       function isChatAdmin() {
-        return isParticipant() && request.auth.uid in resource.data.admins;
+        return isParticipant() && ('admins' in resource.data && request.auth.uid in resource.data.admins);
       }
 
       allow read: if isParticipant() || isDeveloper();
@@ -218,9 +250,13 @@ service cloud.firestore {
       allow update: if (isParticipant() || isDeveloper()) && (
         (incoming().diff(existing()).affectedKeys().hasOnly(['typing'])) ||
         (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt', 'hiddenFor', 'call', 'participantProfiles', 'unreadCount', 'mentionsCount', 'typing'])) ||
-        (isChatAdmin() && incoming().diff(existing()).affectedKeys().hasAny(['groupName', 'groupPhoto', 'admins', 'memberRoles', 'isLocked', 'participants']))
+        (isDeveloper() || !existing().get('isGroup', false) || isChatAdmin())
       );
-      allow delete: if isParticipant() && (!('isGroup' in resource.data) || !resource.data.isGroup || (('admins' in resource.data) && request.auth.uid in resource.data.admins));
+      allow delete: if isParticipant() && (
+        !existing().get('isGroup', false) || 
+        isChatAdmin() || 
+        isDeveloper()
+      );
 
       match /messages/{messageId} {
         function getChat() {
@@ -268,6 +304,11 @@ service cloud.firestore {
       match /receiverCandidates/{candidateId} {
         allow read, write: if isAuthenticated();
       }
+    }
+
+    match /purchase_requests/{requestId} {
+      allow create: if isAuthenticated() && isValidPurchaseRequest(incoming());
+      allow read, update, delete: if isDeveloper();
     }
   }
 }

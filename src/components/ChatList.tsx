@@ -165,13 +165,19 @@ export function ChatList() {
           }
         });
 
-        // 2. Fetch only missing friends (fallback for legacy data)
-        const missingIds = friendsArray.filter(id => id && id !== currentUser.uid && (!detailsMap[id] || (detailsMap[id] as any).specialColor === undefined) && !processedMissingIds.current.has(id));
+        // 2. Fetch only missing friends (fallback for legacy data) - Throttled to every 2 hours
+        const lastFetch = parseInt(localStorage.getItem(`lastFriendFetch_${currentUser.uid}`) || '0');
+        const FETCH_COOLDOWN = 7200000; // 2 hours
+        const missingIds = (Date.now() - lastFetch > FETCH_COOLDOWN) 
+          ? friendsArray.filter(id => id && id !== currentUser.uid && (!detailsMap[id] || (detailsMap[id] as any).specialColor === undefined) && !processedMissingIds.current.has(id))
+          : [];
+        
+        const batchUpdates: Record<string, any> = {};
         
         if (missingIds.length > 0) {
+          localStorage.setItem(`lastFriendFetch_${currentUser.uid}`, Date.now().toString());
           // Limit background fetch to first 20 to avoid massive reads
           const fetchLimit = missingIds.slice(0, 20);
-          const batchUpdates: Record<string, any> = {};
           
           // Chunk missing IDs into groups of 30 (Firestore 'in' limit)
           for (let i = 0; i < fetchLimit.length; i += 30) {
@@ -231,6 +237,21 @@ export function ChatList() {
           }
         } else {
           setContacts(friendsProfiles.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')));
+        }
+
+        // 3. Batch updates to profile if missing fields found
+        const lastSync = parseInt(localStorage.getItem(`lastProfileSync_${currentUser.uid}`) || '0');
+        const SYNC_COOLDOWN = 86400000; // 24 hours
+        
+        if (Object.keys(batchUpdates).length > 0 && (Date.now() - lastSync > SYNC_COOLDOWN) && !quotaExceeded) {
+          try {
+            localStorage.setItem(`lastProfileSync_${currentUser.uid}`, Date.now().toString());
+            updateDoc(doc(db, 'users', currentUser.uid), batchUpdates).catch(e => {
+              if (e.code === 'resource-exhausted') setQuotaExceeded(true);
+            });
+          } catch (syncErr: any) {
+            console.error("Profile sync error:", syncErr);
+          }
         }
         
         setFriendReels(reelsList);
@@ -943,9 +964,17 @@ export function ChatList() {
                     </Avatar>
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between items-baseline">
-                          <div className="flex items-center gap-1 truncate max-w-[75%]">
+                          <div 
+                            className="flex items-center gap-1 truncate max-w-[75%]"
+                            onClick={(e) => {
+                              if (!isGroup && otherParticipantId) {
+                                e.stopPropagation();
+                                setViewingProfileId(otherParticipantId);
+                              }
+                            }}
+                          >
                             <p 
-                              className={`font-bold text-sm truncate ${
+                              className={`font-bold text-sm truncate hover:underline cursor-pointer ${
                                 activeChatId === chat.id ? '' : getNameColorClass(specialColor || nameColor, (chat as any).participantProfiles?.[chat.participants.find(p => p !== currentUser?.uid) || '']?.specialColorExpiry)
                               }`} 
                               style={{ color: activeChatId === chat.id ? 'white' : (isMagicColor(specialColor || nameColor, (chat as any).participantProfiles?.[chat.participants.find(p => p !== currentUser?.uid) || '']?.specialColorExpiry) ? undefined : (nameColor || '#141414')) }}

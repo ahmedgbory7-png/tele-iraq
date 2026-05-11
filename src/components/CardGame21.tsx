@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Trophy, Loader2, Coins, User as UserIcon, RotateCcw } from 'lucide-react';
+import { useStore } from '@/store/useStore';
 
 interface CardGame21Props {
   gameId: string;
@@ -78,7 +79,7 @@ export function CardGame21({ gameId, currentUser, onClose }: CardGame21Props) {
   const otherPlayerId = game?.players.find((p: string) => p !== currentUser?.uid);
 
   const drawCard = async () => {
-    if (!game || !currentUser || !isMyTurn) return;
+    if (!game || !currentUser || !isMyTurn || useStore.getState().quotaExceeded) return;
     
     // Check if score is already 21 or more
     const currentScore = game.scores[currentUser.uid] || 0;
@@ -127,7 +128,7 @@ export function CardGame21({ gameId, currentUser, onClose }: CardGame21Props) {
   };
 
   const stand = async () => {
-    if (!game || !currentUser || !isMyTurn) return;
+    if (!game || !currentUser || !isMyTurn || useStore.getState().quotaExceeded) return;
 
     const updates: any = {
       updatedAt: serverTimestamp(),
@@ -159,7 +160,7 @@ export function CardGame21({ gameId, currentUser, onClose }: CardGame21Props) {
   };
 
   const resetGame = async () => {
-    if (!game || isResetting) return;
+    if (!game || isResetting || useStore.getState().quotaExceeded) return;
     setIsResetting(true);
     
     try {

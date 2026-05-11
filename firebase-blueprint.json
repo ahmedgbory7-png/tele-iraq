@@ -98,6 +98,26 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["callerId", "receiverId", "chatId", "status", "type", "createdAt"]
+    },
+    "PurchaseRequest": {
+      "title": "PurchaseRequest",
+      "description": "Request for magic color activation",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userDisplayName": { "type": "string" },
+        "username": { "type": "string" },
+        "userPhoneNumber": { "type": "string" },
+        "colorValue": { "type": "string" },
+        "colorName": { "type": "string" },
+        "method": { "type": "string" },
+        "plan": { "type": "string" },
+        "price": { "type": "string" },
+        "screenshotUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "deleted"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "colorValue", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -128,6 +148,10 @@
     "/calls/{callId}/receiverCandidates/{candidateId}": {
       "schema": "object",
       "description": "ICE candidates from receiver"
+    },
+    "/purchase_requests/{requestId}": {
+      "schema": "PurchaseRequest",
+      "description": "Pending purchase requests"
     }
   }
 }
